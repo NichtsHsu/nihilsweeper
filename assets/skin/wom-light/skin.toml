@@ -1,0 +1,61 @@
+name = "WoM Light"
+
+background_color = 0xc0c0c0
+highlight_color = 0xffffff
+shadow_color = 0x808080
+
+[border]
+color = 0xc6c6c6
+width_scaling = 0.666667
+
+[top_area]
+background_color = 0xc0c0c0
+height_scaling = 2
+
+[top_area.counter]
+background_color = 0x000000
+minus = "d-.svg"
+digits = [
+    "d0.svg",
+    "d1.svg",
+    "d2.svg",
+    "d3.svg",
+    "d4.svg",
+    "d5.svg",
+    "d6.svg",
+    "d7.svg",
+    "d8.svg",
+    "d9.svg",
+]
+height_scaling = 1.75
+content_height_scaling = 1.4
+content_width_scaling = 0.7
+content_gap_scaling = 0.05
+
+[top_area.face]
+normal = "face_unpressed.svg"
+pressed = "face_pressed.svg"
+win = "face_win.svg"
+lose = "face_lose.svg"
+size_scaling = 1.75
+
+[cell]
+closed = "closed.svg"
+pressed = "pressed.svg"
+opening = "type0.svg"
+numbers = [
+    "type1.svg",
+    "type2.svg",
+    "type3.svg",
+    "type4.svg",
+    "type5.svg",
+    "type6.svg",
+    "type7.svg",
+    "type8.svg",
+]
+
+[cell.mine]
+flagged = "flag.svg"
+unflagged = "mine.svg"
+blasted = "mine_red.svg"
+wrong = "mine_wrong.svg"
