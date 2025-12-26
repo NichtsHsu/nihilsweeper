@@ -1,0 +1,14 @@
+mod base;
+mod config;
+mod error;
+mod ui;
+mod utils;
+
+use ui::MainWindow;
+
+fn main() -> crate::error::Result<()> {
+    env_logger::init();
+    iced::application(MainWindow::new, MainWindow::update, MainWindow::view).run()?;
+
+    Ok(())
+}
