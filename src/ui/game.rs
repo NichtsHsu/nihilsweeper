@@ -800,10 +800,12 @@ impl canvas::Program<GameMessage> for Game {
             }
             
             // Convert viewport bounds to cell coordinates
+            // Since visible_x_start >= board_area.x and visible_y_start >= board_area.y (from max() above),
+            // the subtractions are guaranteed to be non-negative
             let start_x = ((visible_x_start - self.board_area.x) / cell_size_f32).floor() as usize;
             let start_y = ((visible_y_start - self.board_area.y) / cell_size_f32).floor() as usize;
-            let end_x = ((visible_x_end - self.board_area.x) / cell_size_f32).ceil().min(self.board.width() as f32) as usize;
-            let end_y = ((visible_y_end - self.board_area.y) / cell_size_f32).ceil().min(self.board.height() as f32) as usize;
+            let end_x = (((visible_x_end - self.board_area.x) / cell_size_f32).ceil() as usize).min(self.board.width());
+            let end_y = (((visible_y_end - self.board_area.y) / cell_size_f32).ceil() as usize).min(self.board.height());
             
             trace!("Viewport culling: drawing cells from ({}, {}) to ({}, {}) out of board size {}x{}", 
                    start_x, start_y, end_x, end_y, self.board.width(), self.board.height());
