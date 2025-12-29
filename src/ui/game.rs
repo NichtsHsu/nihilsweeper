@@ -17,12 +17,13 @@ pub enum BoardMessage {
     Chord { x: usize, y: usize, is_left: bool },
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub enum GameMessage {
     Board(BoardMessage),
     FaceClicked,
     PressedPositionChanged,
     ChordModeChanged(board::ChordMode),
+    ViewportChanged(iced::Rectangle),
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -55,6 +56,7 @@ pub struct Game {
     foreground_cache: canvas::Cache,
     background_cache: canvas::Cache,
     skin: skin::Skin,
+    viewport: iced::Rectangle,
 }
 
 impl Game {
@@ -382,6 +384,7 @@ impl Game {
             foreground_cache: canvas::Cache::new(),
             background_cache: canvas::Cache::new(),
             skin,
+            viewport: game_area, // Initialize viewport to full game area
         })
     }
 
@@ -445,6 +448,11 @@ impl Game {
             GameMessage::ChordModeChanged(mode) => {
                 debug!("Changing chord mode to {:?}", mode);
                 self.board.set_chord_mode(mode);
+                self.foreground_cache.clear();
+            },
+            GameMessage::ViewportChanged(viewport) => {
+                trace!("Viewport changed to {:?}", viewport);
+                self.viewport = viewport;
                 self.foreground_cache.clear();
             },
         }
@@ -781,8 +789,50 @@ impl canvas::Program<GameMessage> for Game {
                 }
             }
 
-            for x in 0..self.board.width() {
-                for y in 0..self.board.height() {
+            // Calculate visible cell range for viewport culling
+            let cell_size_f32 = self.cell_size as f32;
+            
+            // The viewport from scrollable is in scrollable content coordinates
+            // bounds.position() gives us the canvas position within the scrollable content
+            // We need to calculate which part of the canvas (board_area) is visible
+            let canvas_x = bounds.x;
+            let canvas_y = bounds.y;
+            
+            // Calculate the intersection of viewport and board area
+            // Adjust board_area coordinates to scrollable content space
+            let board_x_in_content = canvas_x + self.board_area.x;
+            let board_y_in_content = canvas_y + self.board_area.y;
+            let board_x_end = board_x_in_content + self.board_area.width;
+            let board_y_end = board_y_in_content + self.board_area.height;
+            
+            let visible_x_start = self.viewport.x.max(board_x_in_content);
+            let visible_y_start = self.viewport.y.max(board_y_in_content);
+            let visible_x_end = (self.viewport.x + self.viewport.width).min(board_x_end);
+            let visible_y_end = (self.viewport.y + self.viewport.height).min(board_y_end);
+            
+            let visible_width = visible_x_end - visible_x_start;
+            let visible_height = visible_y_end - visible_y_start;
+            
+            // Early return if viewport doesn't intersect with board area
+            if visible_width <= 0.0 || visible_height <= 0.0 {
+                trace!("Viewport doesn't intersect with board area, skipping cell rendering");
+                return;
+            }
+            
+            // Convert viewport bounds to cell coordinates (relative to board_area)
+            let start_x = ((visible_x_start - board_x_in_content) / cell_size_f32).floor() as usize;
+            let start_y = ((visible_y_start - board_y_in_content) / cell_size_f32).floor() as usize;
+            
+            let end_x_unclamped = ((visible_x_end - board_x_in_content) / cell_size_f32).ceil() as usize;
+            let end_y_unclamped = ((visible_y_end - board_y_in_content) / cell_size_f32).ceil() as usize;
+            let end_x = end_x_unclamped.min(self.board.width());
+            let end_y = end_y_unclamped.min(self.board.height());
+            
+            trace!("Viewport culling: canvas at ({}, {}), drawing cells from ({}, {}) to ({}, {}) out of board size {}x{}", 
+                   canvas_x, canvas_y, start_x, start_y, end_x, end_y, self.board.width(), self.board.height());
+
+            for x in start_x..end_x {
+                for y in start_y..end_y {
                     let draw_pressed = 'outer: {
                         // Board is in progress
                         if self.board.state().is_end() {
