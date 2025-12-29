@@ -1,3 +1,6 @@
+use std::cell::Cell;
+
+use iced::{futures::io::Empty, wgpu::naga::proc::Emitter};
 use rand::{rng, seq::SliceRandom};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -37,6 +40,16 @@ pub enum BoardState {
         opened_cells: usize,
         flags: usize,
     },
+}
+
+impl CellContent {
+    fn add_one_mine(&mut self) {
+        match self {
+            CellContent::Number(n) => *n += 1,
+            CellContent::Empty => *self = CellContent::Number(1),
+            _ => (),
+        }
+    }
 }
 
 impl BoardState {
@@ -139,15 +152,23 @@ impl StandardBoard {
         self.cell_contents[..self.mines]
             .iter_mut()
             .for_each(|c| *c = CellContent::Mine);
-        if self.mines == self.width * self.height {
+
+        if self.mines >= self.width * self.height {
             self.state = BoardState::InProgress {
                 opened_cells: 0,
                 flags: 0,
             };
             return;
         }
-        if let Some((cx, cy)) = click_position {
-            if let Some(click_index) = self.index(cx, cy) {
+
+        if let Some((cx, cy)) = click_position
+            && let Some(click_index) = self.index(cx, cy)
+        {
+            if cx == 0 && cy == 0 {
+                // Clicked on top-left corner
+                self.cell_contents.swap(0, self.width * self.height - 1);
+                self.cell_contents[1..self.width * self.height].shuffle(&mut rng);
+            } else {
                 self.cell_contents[..self.width * self.height - 1].shuffle(&mut rng);
                 self.cell_contents[click_index..].rotate_right(1);
                 self.cell_contents[click_index] = CellContent::Empty;
@@ -155,33 +176,61 @@ impl StandardBoard {
         } else {
             self.cell_contents.shuffle(&mut rng);
         }
-        for y in 0..self.height {
-            for x in 0..self.width {
-                let index = self.index_unchecked(x, y);
-                if self.cell_contents[index] == CellContent::Mine {
-                    continue;
-                }
-                let mut count = 0;
-                for dy in [-1isize, 0, 1] {
-                    for dx in [-1isize, 0, 1] {
-                        if dx == 0 && dy == 0 {
-                            continue;
+
+        // If mine density > 50%, let number cells to count mines.
+        // Else let mine cells to add values of number cells.
+        if self.mines * 2 > self.width * self.height {
+            for y in 0..self.height {
+                for x in 0..self.width {
+                    let index = self.index_unchecked(x, y);
+                    if self.cell_contents[index] == CellContent::Mine {
+                        continue;
+                    }
+                    let mut count = 0;
+                    for dy in [-1isize, 0, 1] {
+                        for dx in [-1isize, 0, 1] {
+                            if dx == 0 && dy == 0 {
+                                continue;
+                            }
+                            let nx = x as isize + dx;
+                            let ny = y as isize + dy;
+                            if nx >= 0 && nx < self.width as isize && ny >= 0 && ny < self.height as isize {
+                                let n_index = self.index_unchecked(nx as usize, ny as usize);
+                                if self.cell_contents[n_index] == CellContent::Mine {
+                                    count += 1;
+                                }
+                            }
                         }
-                        let nx = x as isize + dx;
-                        let ny = y as isize + dy;
-                        if nx >= 0 && nx < self.width as isize && ny >= 0 && ny < self.height as isize {
-                            let n_index = self.index_unchecked(nx as usize, ny as usize);
-                            if self.cell_contents[n_index] == CellContent::Mine {
-                                count += 1;
+                    }
+                    if count > 0 {
+                        self.cell_contents[index] = CellContent::Number(count);
+                    }
+                }
+            }
+        } else {
+            for y in 0..self.height {
+                for x in 0..self.width {
+                    let index = self.index_unchecked(x, y);
+                    if self.cell_contents[index] != CellContent::Mine {
+                        continue;
+                    }
+                    for dy in [-1isize, 0, 1] {
+                        for dx in [-1isize, 0, 1] {
+                            if dx == 0 && dy == 0 {
+                                continue;
+                            }
+                            let nx = x as isize + dx;
+                            let ny = y as isize + dy;
+                            if nx >= 0 && nx < self.width as isize && ny >= 0 && ny < self.height as isize {
+                                let n_index = self.index_unchecked(nx as usize, ny as usize);
+                                self.cell_contents[n_index].add_one_mine();
                             }
                         }
                     }
                 }
-                if count > 0 {
-                    self.cell_contents[index] = CellContent::Number(count);
-                }
             }
         }
+
         self.state = BoardState::InProgress {
             opened_cells: 0,
             flags: 0,

@@ -35,10 +35,11 @@ pub struct MainWindow {
     skin: Option<skin::Skin>,
     game: Option<game::Game>,
     text_input_states: [String; 3],
+    viewport: iced::Rectangle,
 }
 
 impl MainWindow {
-    const TEXT_INPUT_LIMITS: [usize; 3] = [999, 999, 999999];
+    const TEXT_INPUT_LIMITS: [usize; 3] = [1000, 1000, 1000000];
 
     pub fn new() -> (Self, Task<MainWindowMessage>) {
         let config = GlobalConfig {
@@ -90,6 +91,7 @@ impl MainWindow {
                 skin,
                 game,
                 text_input_states,
+                viewport: Default::default(),
             },
             Task::none(),
         )
@@ -99,6 +101,10 @@ impl MainWindow {
         match message {
             MainWindowMessage::Game(game_msg) => {
                 let is_face_clicked = matches!(game_msg, game::GameMessage::FaceClicked);
+
+                if let game::GameMessage::ViewportChanged(viewport) = game_msg {
+                    self.viewport = viewport;
+                }
 
                 if is_face_clicked {
                     let current_board = self
@@ -130,9 +136,13 @@ impl MainWindow {
                                     self.config.board[2].to_string(),
                                 ];
                             });
+                        if let Some(game) = &mut self.game {
+                            game.update(game::GameMessage::ViewportChanged(self.viewport));
+                        }
                         return Task::none();
                     }
                 }
+
                 if let Some(game) = &mut self.game {
                     game.update(game_msg);
                     if is_face_clicked {
@@ -191,6 +201,7 @@ impl MainWindow {
                         height: bounds.height,
                     };
                     trace!("Scroll event: viewport = {:?}", viewport_rect);
+                    self.viewport = viewport_rect;
                     game.update(game::GameMessage::ViewportChanged(viewport_rect));
                 }
             },
