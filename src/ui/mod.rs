@@ -20,6 +20,7 @@ pub enum MainWindowMessage {
     Game(game::GameMessage),
     TextInputChanged(TextInputType, String),
     ChordModeToggled(bool),
+    Scrolled(iced::widget::scrollable::Viewport),
 }
 
 impl From<game::GameMessage> for MainWindowMessage {
@@ -97,7 +98,9 @@ impl MainWindow {
     pub fn update(&mut self, message: MainWindowMessage) -> iced::Task<MainWindowMessage> {
         match message {
             MainWindowMessage::Game(game_msg) => {
-                if let game::GameMessage::FaceClicked = game_msg {
+                let is_face_clicked = matches!(game_msg, game::GameMessage::FaceClicked);
+                
+                if is_face_clicked {
                     let current_board = self
                         .game
                         .as_ref()
@@ -132,7 +135,7 @@ impl MainWindow {
                 }
                 if let Some(game) = &mut self.game {
                     game.update(game_msg);
-                    if let game::GameMessage::FaceClicked = game_msg {
+                    if is_face_clicked {
                         self.config.board = [game.board().width(), game.board().height(), game.board().mines()];
                         self.text_input_states = [
                             self.config.board[0].to_string(),
@@ -176,6 +179,20 @@ impl MainWindow {
                     game.update(game::GameMessage::ChordModeChanged(self.config.chord_mode));
                 }
                 trace!("Chord mode toggled: {:?}", self.config.chord_mode);
+            },
+            MainWindowMessage::Scrolled(viewport) => {
+                if let Some(game) = &mut self.game {
+                    let absolute_offset = viewport.absolute_offset();
+                    let bounds = viewport.bounds();
+                    let viewport_rect = iced::Rectangle {
+                        x: absolute_offset.x,
+                        y: absolute_offset.y,
+                        width: bounds.width,
+                        height: bounds.height,
+                    };
+                    trace!("Scroll event: viewport = {:?}", viewport_rect);
+                    game.update(game::GameMessage::ViewportChanged(viewport_rect));
+                }
             },
         };
         Task::none()
@@ -294,6 +311,7 @@ impl MainWindow {
             vertical: Default::default(),
             horizontal: Default::default(),
         })
+        .on_scroll(MainWindowMessage::Scrolled)
         .into()
     }
 }

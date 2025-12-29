@@ -17,12 +17,13 @@ pub enum BoardMessage {
     Chord { x: usize, y: usize, is_left: bool },
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub enum GameMessage {
     Board(BoardMessage),
     FaceClicked,
     PressedPositionChanged,
     ChordModeChanged(board::ChordMode),
+    ViewportChanged(iced::Rectangle),
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -55,6 +56,7 @@ pub struct Game {
     foreground_cache: canvas::Cache,
     background_cache: canvas::Cache,
     skin: skin::Skin,
+    viewport: iced::Rectangle,
 }
 
 impl Game {
@@ -382,6 +384,7 @@ impl Game {
             foreground_cache: canvas::Cache::new(),
             background_cache: canvas::Cache::new(),
             skin,
+            viewport: game_area, // Initialize viewport to full game area
         })
     }
 
@@ -445,6 +448,11 @@ impl Game {
             GameMessage::ChordModeChanged(mode) => {
                 debug!("Changing chord mode to {:?}", mode);
                 self.board.set_chord_mode(mode);
+                self.foreground_cache.clear();
+            },
+            GameMessage::ViewportChanged(viewport) => {
+                trace!("Viewport changed to {:?}", viewport);
+                self.viewport = viewport;
                 self.foreground_cache.clear();
             },
         }
@@ -784,11 +792,11 @@ impl canvas::Program<GameMessage> for Game {
             // Calculate visible cell range for viewport culling
             let cell_size_f32 = self.cell_size as f32;
             
-            // Calculate the intersection of viewport bounds and board area
-            let visible_x_start = bounds.x.max(self.board_area.x);
-            let visible_y_start = bounds.y.max(self.board_area.y);
-            let visible_x_end = (bounds.x + bounds.width).min(self.board_area.x + self.board_area.width);
-            let visible_y_end = (bounds.y + bounds.height).min(self.board_area.y + self.board_area.height);
+            // Calculate the intersection of viewport and board area
+            let visible_x_start = self.viewport.x.max(self.board_area.x);
+            let visible_y_start = self.viewport.y.max(self.board_area.y);
+            let visible_x_end = (self.viewport.x + self.viewport.width).min(self.board_area.x + self.board_area.width);
+            let visible_y_end = (self.viewport.y + self.viewport.height).min(self.board_area.y + self.board_area.height);
             
             let visible_width = visible_x_end - visible_x_start;
             let visible_height = visible_y_end - visible_y_start;
