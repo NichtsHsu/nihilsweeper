@@ -792,6 +792,12 @@ impl canvas::Program<GameMessage> for Game {
                 height: (bounds.y + bounds.height).min(self.board_area.y + self.board_area.height) - bounds.y.max(self.board_area.y),
             };
             
+            // Early return if viewport doesn't intersect with board area
+            if visible_rect.width <= 0.0 || visible_rect.height <= 0.0 {
+                trace!("Viewport doesn't intersect with board area, skipping cell rendering");
+                return;
+            }
+            
             // Convert viewport bounds to cell coordinates
             let start_x = ((visible_rect.x - self.board_area.x) / cell_size_f32).floor().max(0.0) as usize;
             let start_y = ((visible_rect.y - self.board_area.y) / cell_size_f32).floor().max(0.0) as usize;
