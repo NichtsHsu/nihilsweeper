@@ -784,25 +784,26 @@ impl canvas::Program<GameMessage> for Game {
             // Calculate visible cell range for viewport culling
             let cell_size_f32 = self.cell_size as f32;
             
-            // Calculate the visible range of cells based on the bounds
-            let visible_rect = iced::Rectangle {
-                x: bounds.x.max(self.board_area.x),
-                y: bounds.y.max(self.board_area.y),
-                width: (bounds.x + bounds.width).min(self.board_area.x + self.board_area.width) - bounds.x.max(self.board_area.x),
-                height: (bounds.y + bounds.height).min(self.board_area.y + self.board_area.height) - bounds.y.max(self.board_area.y),
-            };
+            // Calculate the intersection of viewport bounds and board area
+            let visible_x_start = bounds.x.max(self.board_area.x);
+            let visible_y_start = bounds.y.max(self.board_area.y);
+            let visible_x_end = (bounds.x + bounds.width).min(self.board_area.x + self.board_area.width);
+            let visible_y_end = (bounds.y + bounds.height).min(self.board_area.y + self.board_area.height);
+            
+            let visible_width = visible_x_end - visible_x_start;
+            let visible_height = visible_y_end - visible_y_start;
             
             // Early return if viewport doesn't intersect with board area
-            if visible_rect.width <= 0.0 || visible_rect.height <= 0.0 {
+            if visible_width <= 0.0 || visible_height <= 0.0 {
                 trace!("Viewport doesn't intersect with board area, skipping cell rendering");
                 return;
             }
             
             // Convert viewport bounds to cell coordinates
-            let start_x = ((visible_rect.x - self.board_area.x) / cell_size_f32).floor().max(0.0) as usize;
-            let start_y = ((visible_rect.y - self.board_area.y) / cell_size_f32).floor().max(0.0) as usize;
-            let end_x = ((visible_rect.x + visible_rect.width - self.board_area.x) / cell_size_f32).ceil().min(self.board.width() as f32) as usize;
-            let end_y = ((visible_rect.y + visible_rect.height - self.board_area.y) / cell_size_f32).ceil().min(self.board.height() as f32) as usize;
+            let start_x = ((visible_x_start - self.board_area.x) / cell_size_f32).floor() as usize;
+            let start_y = ((visible_y_start - self.board_area.y) / cell_size_f32).floor() as usize;
+            let end_x = ((visible_x_end - self.board_area.x) / cell_size_f32).ceil().min(self.board.width() as f32) as usize;
+            let end_y = ((visible_y_end - self.board_area.y) / cell_size_f32).ceil().min(self.board.height() as f32) as usize;
             
             trace!("Viewport culling: drawing cells from ({}, {}) to ({}, {}) out of board size {}x{}", 
                    start_x, start_y, end_x, end_y, self.board.width(), self.board.height());
