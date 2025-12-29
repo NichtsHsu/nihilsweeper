@@ -99,7 +99,7 @@ impl MainWindow {
         match message {
             MainWindowMessage::Game(game_msg) => {
                 let is_face_clicked = matches!(game_msg, game::GameMessage::FaceClicked);
-                
+
                 if is_face_clicked {
                     let current_board = self
                         .game
@@ -313,5 +313,19 @@ impl MainWindow {
         })
         .on_scroll(MainWindowMessage::Scrolled)
         .into()
+    }
+
+    pub fn subscriptions(&self) -> iced::Subscription<MainWindowMessage> {
+        iced::event::listen_with(|event, _, _| match event {
+            iced::Event::Window(iced::window::Event::Opened { size, .. }) => Some(MainWindowMessage::Game(
+                game::GameMessage::ViewportChanged(iced::Rectangle {
+                    x: 0.0,
+                    y: 0.0,
+                    width: size.width,
+                    height: size.height,
+                }),
+            )),
+            _ => None,
+        })
     }
 }
