@@ -184,13 +184,18 @@ impl MainWindow {
                 if let Some(game) = &mut self.game {
                     let absolute_offset = viewport.absolute_offset();
                     let bounds = viewport.bounds();
+                    
+                    // The scrollable contains row![control_panel, game], where control_panel has a fixed width
+                    // We need to adjust the viewport coordinates to be relative to the game canvas, not the scrollable content
+                    const CONTROL_PANEL_WIDTH: f32 = 150.0;
+                    
                     let viewport_rect = iced::Rectangle {
-                        x: absolute_offset.x,
+                        x: absolute_offset.x - CONTROL_PANEL_WIDTH,
                         y: absolute_offset.y,
                         width: bounds.width,
                         height: bounds.height,
                     };
-                    trace!("Scroll event: viewport = {:?}", viewport_rect);
+                    trace!("Scroll event: viewport = {:?} (adjusted for control panel offset)", viewport_rect);
                     game.update(game::GameMessage::ViewportChanged(viewport_rect));
                 }
             },
