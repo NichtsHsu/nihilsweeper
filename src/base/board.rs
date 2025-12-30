@@ -1,6 +1,3 @@
-use std::cell::Cell;
-
-use iced::{futures::io::Empty, wgpu::naga::proc::Emitter};
 use rand::{rng, seq::SliceRandom};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -102,14 +99,14 @@ impl BoardState {
     }
 }
 
-// #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-// pub struct Statistics {}
-
 pub trait Board {
     fn width(&self) -> usize;
     fn height(&self) -> usize;
     fn mines(&self) -> usize;
+
+    /// Used for no-guessing boards to indicate the first click position.
     fn start_position(&self) -> Option<(usize, usize)>;
+
     fn state(&self) -> BoardState;
     fn set_chord_mode(&mut self, mode: ChordMode);
     fn chord_mode(&self) -> ChordMode;

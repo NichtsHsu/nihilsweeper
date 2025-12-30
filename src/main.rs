@@ -1,8 +1,11 @@
+#![allow(unused)]
+
 mod base;
 mod config;
 mod error;
 mod ui;
 mod utils;
+mod engine;
 
 use ui::MainWindow;
 

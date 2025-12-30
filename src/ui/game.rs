@@ -1,13 +1,5 @@
-use crate::{
-    base::board::{self, Board},
-    config::GlobalConfig,
-    ui::skin,
-};
-use iced::{
-    alignment::Vertical::Top,
-    debug,
-    widget::canvas::{self, stroke},
-};
+use crate::{base::board, config::GlobalConfig, ui::skin};
+use iced::widget::canvas;
 use log::{debug, trace};
 
 #[derive(Debug, Clone, Copy)]
@@ -22,6 +14,7 @@ pub enum GameMessage {
     Board(BoardMessage),
     FaceClicked,
     PressedPositionChanged,
+    Resize(u32, skin::Skin),
     ChordModeChanged(board::ChordMode),
     ViewportChanged(iced::Rectangle),
 }
@@ -60,26 +53,48 @@ pub struct Game {
 }
 
 impl Game {
-    pub fn new(board: Box<dyn board::Board>, config: &GlobalConfig, skin: skin::Skin) -> crate::error::Result<Self> {
+    pub fn new(board: Box<dyn board::Board>, config: &GlobalConfig, skin: skin::Skin) -> Self {
+        let mut this = Self {
+            board,
+            game_area: iced::Rectangle::default(),
+            top_area: iced::Rectangle::default(),
+            board_area: iced::Rectangle::default(),
+            counter_area: iced::Rectangle::default(),
+            counter_digit_area: [iced::Rectangle::default(); 3],
+            face_area: iced::Rectangle::default(),
+            borders: Vec::new(),
+            light_paths: Vec::new(),
+            shadow_paths: Vec::new(),
+            cell_size: config.cell_size,
+            foreground_cache: canvas::Cache::new(),
+            background_cache: canvas::Cache::new(),
+            skin,
+            viewport: Default::default(),
+        };
+        this.calculate_areas();
+        this
+    }
+
+    fn calculate_areas(&mut self) {
         let mut top_area = iced::Rectangle {
-            x: skin.border.width,
-            y: skin.border.width,
-            width: board.width() as f32 * config.cell_size as f32,
-            height: skin.top_area.height,
+            x: self.skin.border.width,
+            y: self.skin.border.width,
+            width: self.board.width() as f32 * self.cell_size as f32,
+            height: self.skin.top_area.height,
         };
 
-        let counter_offset = ((skin.top_area.height - skin.top_area.counter.height) / 2.0).floor();
-        let counter_border_width = ((skin.top_area.counter.height
-            - skin.top_area.counter.content_height
-            - skin.top_area.counter.content_gap * 2.0)
+        let counter_offset = ((self.skin.top_area.height - self.skin.top_area.counter.height) / 2.0).floor();
+        let counter_border_width = ((self.skin.top_area.counter.height
+            - self.skin.top_area.counter.content_height
+            - self.skin.top_area.counter.content_gap * 2.0)
             / 2.0)
             .floor();
         let counter_right_top;
         let mut counter_area = iced::Rectangle {
             x: top_area.x + counter_offset + counter_border_width,
             y: top_area.y + counter_offset + counter_border_width,
-            width: skin.top_area.counter.content_width * 3.0 + skin.top_area.counter.content_gap * 6.0,
-            height: skin.top_area.counter.content_height + skin.top_area.counter.content_gap * 2.0,
+            width: self.skin.top_area.counter.content_width * 3.0 + self.skin.top_area.counter.content_gap * 6.0,
+            height: self.skin.top_area.counter.content_height + self.skin.top_area.counter.content_gap * 2.0,
         };
         let counter_digit_area;
         if (counter_area.x + counter_area.width + counter_border_width + counter_offset) > (top_area.x + top_area.width)
@@ -96,49 +111,53 @@ impl Game {
         } else {
             counter_digit_area = [
                 iced::Rectangle {
-                    x: counter_area.x + skin.top_area.counter.content_gap,
-                    y: counter_area.y + skin.top_area.counter.content_gap,
-                    width: skin.top_area.counter.content_width,
-                    height: skin.top_area.counter.content_height,
-                },
-                iced::Rectangle {
-                    x: counter_area.x + skin.top_area.counter.content_width + skin.top_area.counter.content_gap * 3.0,
-                    y: counter_area.y + skin.top_area.counter.content_gap,
-                    width: skin.top_area.counter.content_width,
-                    height: skin.top_area.counter.content_height,
+                    x: counter_area.x + self.skin.top_area.counter.content_gap,
+                    y: counter_area.y + self.skin.top_area.counter.content_gap,
+                    width: self.skin.top_area.counter.content_width,
+                    height: self.skin.top_area.counter.content_height,
                 },
                 iced::Rectangle {
                     x: counter_area.x
-                        + skin.top_area.counter.content_width * 2.0
-                        + skin.top_area.counter.content_gap * 5.0,
-                    y: counter_area.y + skin.top_area.counter.content_gap,
-                    width: skin.top_area.counter.content_width,
-                    height: skin.top_area.counter.content_height,
+                        + self.skin.top_area.counter.content_width
+                        + self.skin.top_area.counter.content_gap * 3.0,
+                    y: counter_area.y + self.skin.top_area.counter.content_gap,
+                    width: self.skin.top_area.counter.content_width,
+                    height: self.skin.top_area.counter.content_height,
+                },
+                iced::Rectangle {
+                    x: counter_area.x
+                        + self.skin.top_area.counter.content_width * 2.0
+                        + self.skin.top_area.counter.content_gap * 5.0,
+                    y: counter_area.y + self.skin.top_area.counter.content_gap,
+                    width: self.skin.top_area.counter.content_width,
+                    height: self.skin.top_area.counter.content_height,
                 },
             ];
             counter_right_top = counter_area.x + counter_area.width + counter_border_width * 2.0;
         }
 
-        let face_offset = ((skin.top_area.height - skin.top_area.face.size) / 2.0).floor();
+        let face_offset = ((self.skin.top_area.height - self.skin.top_area.face.size) / 2.0).floor();
         let face_area;
-        if (counter_right_top + skin.top_area.face.size + face_offset * 2.0) > top_area.width {
+        if (counter_right_top + self.skin.top_area.face.size + face_offset * 2.0) > top_area.width {
             debug!("Not enough space for face, skipping");
             face_area = iced::Rectangle::default();
-        } else if counter_right_top + skin.top_area.face.size / 2.0 + face_offset < top_area.x + top_area.width / 2.0 {
+        } else if counter_right_top + self.skin.top_area.face.size / 2.0 + face_offset
+            < top_area.x + top_area.width / 2.0
+        {
             debug!("Placing face in the center");
             face_area = iced::Rectangle {
-                x: top_area.x + (top_area.width - skin.top_area.face.size) / 2.0,
+                x: top_area.x + (top_area.width - self.skin.top_area.face.size) / 2.0,
                 y: top_area.y + face_offset,
-                width: skin.top_area.face.size,
-                height: skin.top_area.face.size,
+                width: self.skin.top_area.face.size,
+                height: self.skin.top_area.face.size,
             };
         } else {
             debug!("Placing face to the right of counter");
             face_area = iced::Rectangle {
                 x: counter_right_top + face_offset,
                 y: top_area.y + face_offset,
-                width: skin.top_area.face.size,
-                height: skin.top_area.face.size,
+                width: self.skin.top_area.face.size,
+                height: self.skin.top_area.face.size,
             };
         }
 
@@ -146,53 +165,52 @@ impl Game {
         {
             debug!("No top area, adjusting game area accordingly");
             top_area = iced::Rectangle::default();
-            skin.border.width
+            self.skin.border.width
         } else {
-            top_area.height + skin.border.width * 2.0
+            top_area.height + self.skin.border.width * 2.0
         };
         let board_area = iced::Rectangle {
-            x: skin.border.width,
+            x: self.skin.border.width,
             y: game_area_offset,
-            width: board.width() as f32 * config.cell_size as f32,
-            height: board.height() as f32 * config.cell_size as f32,
+            width: self.board.width() as f32 * self.cell_size as f32,
+            height: self.board.height() as f32 * self.cell_size as f32,
         };
 
         let game_area = iced::Rectangle {
             x: 0.0,
             y: 0.0,
-            width: board.width() as f32 * config.cell_size as f32 + skin.border.width * 2.0,
-            height: board_area.y + board_area.height + skin.border.width,
+            width: self.board.width() as f32 * self.cell_size as f32 + self.skin.border.width * 2.0,
+            height: board_area.y + board_area.height + self.skin.border.width,
         };
 
         let mut borders = vec![
             iced::Rectangle {
                 x: 0.0,
                 y: 0.0,
-                width: skin.border.width,
+                width: self.skin.border.width,
                 height: game_area.height,
             },
             iced::Rectangle {
                 x: 0.0,
                 y: 0.0,
                 width: game_area.width,
-                height: skin.border.width,
+                height: self.skin.border.width,
             },
             iced::Rectangle {
-                x: game_area.x + game_area.width - skin.border.width,
+                x: game_area.x + game_area.width - self.skin.border.width,
                 y: 0.0,
-                width: skin.border.width,
+                width: self.skin.border.width,
                 height: game_area.height,
             },
             iced::Rectangle {
                 x: 0.0,
-                y: game_area.y + game_area.height - skin.border.width,
+                y: game_area.y + game_area.height - self.skin.border.width,
                 width: game_area.width,
-                height: skin.border.width,
+                height: self.skin.border.width,
             },
         ];
 
-        let light_shadow_width = skin.border.width / 4.0;
-
+        let light_shadow_width = self.skin.border.width / 4.0;
         let main_light_path = canvas::Path::new(|p| {
             p.move_to(game_area.position());
             p.line_to(iced::Point::new(game_area.x + game_area.width, game_area.y));
@@ -280,7 +298,7 @@ impl Game {
                 x: 0.0,
                 y: top_area.y + top_area.height,
                 width: game_area.width,
-                height: skin.border.width,
+                height: self.skin.border.width,
             });
             let top_light_path = canvas::Path::new(|p| {
                 p.move_to(iced::Point::new(top_area.x + top_area.width, top_area.y));
@@ -369,27 +387,31 @@ impl Game {
             shadow_paths.push(counter_shadow_path);
         }
 
-        Ok(Self {
-            board,
-            game_area,
-            top_area,
-            board_area,
-            counter_area,
-            counter_digit_area,
-            face_area,
-            borders,
-            light_paths,
-            shadow_paths,
-            cell_size: config.cell_size,
-            foreground_cache: canvas::Cache::new(),
-            background_cache: canvas::Cache::new(),
-            skin,
-            viewport: Default::default(),
-        })
+        self.game_area = game_area;
+        self.top_area = top_area;
+        self.board_area = board_area;
+        self.counter_area = counter_area;
+        self.counter_digit_area = counter_digit_area;
+        self.face_area = face_area;
+        self.borders = borders;
+        self.light_paths = light_paths;
+        self.shadow_paths = shadow_paths;
     }
 
     pub fn board(&self) -> &dyn board::Board {
         self.board.as_ref()
+    }
+
+    pub fn board_area(&self) -> iced::Rectangle {
+        self.board_area
+    }
+
+    pub fn game_area(&self) -> iced::Rectangle {
+        self.game_area
+    }
+
+    pub fn cell_size(&self) -> u32 {
+        self.cell_size
     }
 
     fn cell_at(&self, pos: iced::Point) -> Option<(usize, usize)> {
@@ -454,6 +476,14 @@ impl Game {
                 trace!("Viewport changed to {:?}", viewport);
                 self.viewport = viewport;
                 self.foreground_cache.clear();
+            },
+            GameMessage::Resize(cell_size, skin) => {
+                debug!("Resizing cell size to {}", cell_size);
+                self.cell_size = cell_size;
+                self.skin = skin;
+                self.calculate_areas();
+                self.foreground_cache.clear();
+                self.background_cache.clear();
             },
         }
     }
@@ -720,7 +750,6 @@ impl canvas::Program<GameMessage> for Game {
         bounds: iced::Rectangle,
         _cursor: iced::mouse::Cursor,
     ) -> Vec<canvas::Geometry> {
-        let start = std::time::Instant::now();
         let background_geom = self.background_cache.draw(renderer, bounds.size(), |frame| {
             let background = canvas::Path::rectangle(iced::Point::ORIGIN, frame.size());
             frame.fill(&background, self.skin.background_color);
@@ -934,12 +963,38 @@ impl canvas::Program<GameMessage> for Game {
                         ),
                         img,
                     );
+
+                    // 'no_overlay: {
+                    //     if let Some(analysis) = &self.analysis_result
+                    //         && let Some(cell_safety) = analysis.get(x, y)
+                    //     {
+                    //         let overlay_color = match cell_safety {
+                    //             crate::engine::analysis::CellSafety::Safe =>
+                    // iced::Color::from_rgba(0.0, 1.0, 0.0, 0.5),
+                    // crate::engine::analysis::CellSafety::Mine => iced::Color::from_rgba(1.0, 0.0,
+                    // 0.0, 0.5),
+                    // crate::engine::analysis::CellSafety::Probability(cell_probability) => {
+                    //                 iced::Color::from_rgba(
+                    //                     cell_probability.mine_probability / 100.0,
+                    //                     1.0 - cell_probability.mine_probability / 100.0,
+                    //                     0.0,
+                    //                     0.5,
+                    //                 )
+                    //             },
+                    //             _ => break 'no_overlay,
+                    //         };
+                    //         trace!("Drawing analysis overlay at ({}, {}) with color {:?}", x, y,
+                    // overlay_color);         frame.fill_rectangle(
+                    //             self.cell_position(x, y),
+                    //             iced::Size::new(self.cell_size as f32, self.cell_size as f32),
+                    //             overlay_color,
+                    //         );
+                    //     };
+                    // }
                 }
             }
         });
 
-        let duration = start.elapsed();
-        trace!("Game draw took {:?}", duration);
         vec![background_geom, foreground_geom]
     }
 }
