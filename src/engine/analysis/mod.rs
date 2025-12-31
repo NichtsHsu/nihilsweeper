@@ -1,6 +1,7 @@
 use core::f32;
 
 use crate::base::board;
+use itertools::iproduct;
 
 pub mod brute_force;
 pub mod error;
@@ -11,7 +12,7 @@ pub mod trivial;
 
 pub fn default_engine() -> impl AnalysisEngine {
     trivial::TrivialAnalysis::new(false)
-        .then(probability::ProbabilityCalculator)
+        .then(probability::ProbabilityCalculator::new(false))
         .then(half_chance::HalfChanceCheck)
         .or(select(
             |board| board.conditions_more_than(1000.0),
@@ -42,11 +43,20 @@ impl Default for CellProbability {
 #[derive(Debug, Clone, Copy, Default)]
 pub enum CellSafety {
     #[default]
-    Unhandled,
+    // An unresolved closed cell that is not adjacent to any revealed numbers.
+    Wilderness,
+    // An unresolved closed cell that is adjacent to revealed number(s).
+    Frontier,
+    // A number cell that has adjacent unresolved cells.
     Unresolved(u8),
+    // A number cell that has had all its adjacent mines or safe cells identified.
+    // An empty cell always be `Resolved(0)`.
     Resolved(u8),
+    // A closed cell that has been determined to be safe.
     Safe,
+    // A closed cell that has been determined to be a mine.
     Mine,
+    // A closed cell with an associated probability of being a mine.
     Probability(CellProbability),
 }
 
@@ -61,27 +71,28 @@ pub struct BoardSafety {
 
 impl BoardSafety {
     pub fn new(board: &dyn board::Board, admit_flags: bool) -> Self {
-        let mut cells = vec![CellSafety::Unhandled; board.width() * board.height()];
-        for x in 0..board.width() {
-            for y in 0..board.height() {
-                if let Some(cell_state) = board.cell_state(x, y) {
-                    if admit_flags {
-                        cells[y * board.width() + x] = match cell_state {
-                            board::CellState::Opening(0) => CellSafety::Resolved(0),
-                            board::CellState::Opening(number) => CellSafety::Unresolved(number),
-                            board::CellState::Flagged => CellSafety::Mine,
-                            _ => CellSafety::Unhandled,
-                        }
-                    } else {
-                        cells[y * board.width() + x] = match cell_state {
-                            board::CellState::Opening(0) => CellSafety::Resolved(0),
-                            board::CellState::Opening(number) => CellSafety::Unresolved(number),
-                            _ => CellSafety::Unhandled,
-                        }
+        let check_frontier = |x: usize, y: usize| {
+            for nx in x.saturating_sub(1)..=(x + 1).min(board.width() - 1) {
+                for ny in y.saturating_sub(1)..=(y + 1).min(board.height() - 1) {
+                    if nx == x && ny == y {
+                        continue;
+                    }
+                    if let Some(board::CellState::Opening(_)) = board.cell_state(nx, ny) {
+                        return CellSafety::Frontier;
                     }
                 }
             }
-        }
+            CellSafety::Wilderness
+        };
+
+        let cells = iproduct![0..board.height(), 0..board.width()]
+            .map(|(y, x)| match board.cell_state(x, y).unwrap() {
+                board::CellState::Opening(0) => CellSafety::Resolved(0),
+                board::CellState::Opening(number) => CellSafety::Unresolved(number),
+                board::CellState::Flagged if admit_flags => CellSafety::Mine,
+                _ => check_frontier(x, y),
+            })
+            .collect();
 
         BoardSafety {
             cells,
@@ -140,7 +151,7 @@ impl BoardSafety {
         let mut remaining_mines = self.mines;
         for cell in &self.cells {
             match cell {
-                CellSafety::Unhandled | CellSafety::Probability(..) => unconfirmed += 1,
+                CellSafety::Wilderness | CellSafety::Frontier | CellSafety::Probability(..) => unconfirmed += 1,
                 CellSafety::Mine => remaining_mines -= 1,
                 _ => {},
             }

@@ -14,9 +14,11 @@ pub enum GameMessage {
     Board(BoardMessage),
     FaceClicked,
     PressedPositionChanged,
-    Resize(u32, skin::Skin),
+    Resize(u32, Box<skin::Skin>),
     ChordModeChanged(board::ChordMode),
     ViewportChanged(iced::Rectangle),
+    Continue,
+    Replay,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -480,10 +482,20 @@ impl Game {
             GameMessage::Resize(cell_size, skin) => {
                 debug!("Resizing cell size to {}", cell_size);
                 self.cell_size = cell_size;
-                self.skin = skin;
+                self.skin = *skin;
                 self.calculate_areas();
                 self.foreground_cache.clear();
                 self.background_cache.clear();
+            },
+            GameMessage::Continue => {
+                debug!("Continuing from lost state, resetting the board");
+                self.board.resume();
+                self.foreground_cache.clear();
+            },
+            GameMessage::Replay => {
+                debug!("Replaying the current game, resetting the board");
+                self.board.replay();
+                self.foreground_cache.clear();
             },
         }
     }

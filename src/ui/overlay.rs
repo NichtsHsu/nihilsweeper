@@ -15,6 +15,7 @@ pub enum AnalysisOverlayMessage {
         board_area: iced::Rectangle,
     },
     SetEnabled(bool),
+    SetAdmitFlags(bool),
 }
 
 pub struct AnalysisOverlay {
@@ -105,11 +106,11 @@ impl AnalysisOverlay {
                     self.clear_analysis();
                 }
             },
+            AnalysisOverlayMessage::SetAdmitFlags(admit_flags) => {
+                self.analysis_admit_flags = admit_flags;
+                self.clear_analysis();
+            },
         }
-    }
-
-    pub fn enabled(&self) -> bool {
-        self.enabled
     }
 
     pub fn view(&self) -> iced::Element<'_, super::MainWindowMessage> {

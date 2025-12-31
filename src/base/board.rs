@@ -36,6 +36,7 @@ pub enum BoardState {
     Lost {
         opened_cells: usize,
         flags: usize,
+        blasted_cell: (usize, usize),
     },
 }
 
@@ -80,18 +81,20 @@ impl BoardState {
         }
     }
 
-    pub fn blast(&mut self) {
+    pub fn blast(&mut self, x: usize, y: usize) {
         match self {
             BoardState::InProgress { opened_cells, flags } => {
                 *self = BoardState::Lost {
                     opened_cells: *opened_cells,
                     flags: *flags,
+                    blasted_cell: (x, y),
                 };
             },
             BoardState::NotStarted => {
                 *self = BoardState::Lost {
                     opened_cells: 0,
                     flags: 0,
+                    blasted_cell: (x, y),
                 }
             },
             _ => (),
@@ -100,22 +103,60 @@ impl BoardState {
 }
 
 pub trait Board {
+    /// Get the width of the board.
     fn width(&self) -> usize;
+
+    /// Get the height of the board.
     fn height(&self) -> usize;
+
+    /// Get the number of mines on the board.
     fn mines(&self) -> usize;
 
     /// Used for no-guessing boards to indicate the first click position.
     fn start_position(&self) -> Option<(usize, usize)>;
 
+    /// Get the current state of the board.
     fn state(&self) -> BoardState;
+
+    /// Set the chord mode of the board.
+    ///
+    /// *Note*: The caller does *NOT* guarantee that mouse events are interpreted according to the
+    /// configured chord mode; the implementer must handle the chord mode internally.
     fn set_chord_mode(&mut self, mode: ChordMode);
+
+    /// Get the current chord mode of the board.
     fn chord_mode(&self) -> ChordMode;
+
+    /// Perform a left click on the cell at `(x, y)`.
     fn left_click(&mut self, x: usize, y: usize) -> bool;
+
+    /// Perform a right click on the cell at `(x, y)`.
     fn right_click(&mut self, x: usize, y: usize);
+
+    /// Perform a chord click on the cell at `(x, y)`.
+    ///
+    /// `is_left`: `true` if the chord click is triggered by left button release, `false` if by
+    /// right button release.
     fn chord_click(&mut self, x: usize, y: usize, is_left: bool) -> bool;
+
+    /// *Note*: The implementer must ensure that a `Some(CellState)` is returned when `(x, y)` is
+    /// within bounds, so the caller can safely `unwrap()` the result while iterating over
+    /// `(0..width(), 0..height())` without causing a panic.
     fn cell_state(&self, x: usize, y: usize) -> Option<CellState>;
+
+    /// *Note*: The implementer must ensure that a `Some(CellContent)` is returned when `(x, y)` is
+    /// within bounds, so the caller can safely `unwrap()` the result while iterating over
+    /// `(0..width(), 0..height())` without causing a panic.
     fn cell_content(&self, x: usize, y: usize) -> Option<CellContent>;
+
+    /// Reset the board.
     fn reset(&mut self);
+
+    /// Reset the board while keeping the mine positions.
+    fn replay(&mut self);
+
+    /// Continue playing only when the board is in `BoardState::Lost` state.
+    fn resume(&mut self);
 }
 
 #[derive(Clone, Debug)]
@@ -249,7 +290,7 @@ impl StandardBoard {
                 // It's usually not possible to reach here when `CellState::Flagged`, but just in case
                 if self.cell_states[index] == CellState::Closed {
                     self.cell_states[index] = CellState::Blasted;
-                    self.state.blast();
+                    self.state.blast(x, y);
                 }
             },
             CellContent::Number(n) => {
@@ -428,5 +469,26 @@ impl Board for StandardBoard {
         self.state = BoardState::NotStarted;
         self.cell_states.fill(CellState::Closed);
         self.cell_contents.fill(CellContent::Empty);
+    }
+
+    fn replay(&mut self) {
+        self.cell_states.fill(CellState::Closed);
+        self.state = BoardState::InProgress {
+            opened_cells: 0,
+            flags: 0,
+        };
+    }
+
+    fn resume(&mut self) {
+        if let BoardState::Lost {
+            opened_cells,
+            flags,
+            blasted_cell: (x, y),
+        } = self.state
+        {
+            let index = self.index_unchecked(x, y);
+            self.cell_states[index] = CellState::Closed;
+            self.state = BoardState::InProgress { opened_cells, flags };
+        }
     }
 }

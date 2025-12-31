@@ -13,7 +13,7 @@ impl TrivialAnalysis {
     }
 
     /// Analyze a single position on the board.
-    /// Returns `Ok(true)`` if `stop_on_first_safe` is set and a safe cell is found.
+    /// Returns `Ok(true)` if `stop_on_first_safe` is set and a safe cell is found.
     fn calculate_position(&self, board: &mut BoardSafety, x: usize, y: usize) -> super::error::Result<bool> {
         if let Some(&CellSafety::Unresolved(n)) = board.get(x, y) {
             let mut flagged_neighbors = 0;
@@ -25,13 +25,15 @@ impl TrivialAnalysis {
                     }
                     match board.get(nx, ny) {
                         Some(CellSafety::Mine) => flagged_neighbors += 1,
-                        Some(CellSafety::Unhandled | CellSafety::Probability { .. }) => unopened_neighbors += 1,
+                        Some(CellSafety::Wilderness | CellSafety::Frontier | CellSafety::Probability { .. }) => {
+                            unopened_neighbors += 1
+                        },
                         _ => {},
                     }
                 }
             }
             if flagged_neighbors == n && unopened_neighbors > 0 {
-                // All unresolved neighbors are safe
+                // All adjacent unresolved cells are safe
                 board.set(x, y, CellSafety::Resolved(n));
                 for nx in x.saturating_sub(1)..=(x + 1).min(board.width() - 1) {
                     for ny in y.saturating_sub(1)..=(y + 1).min(board.height() - 1) {
@@ -40,7 +42,7 @@ impl TrivialAnalysis {
                         }
                         if matches!(
                             board.get(nx, ny),
-                            Some(CellSafety::Unhandled) | Some(CellSafety::Probability { .. })
+                            Some(CellSafety::Wilderness | CellSafety::Frontier | CellSafety::Probability { .. })
                         ) {
                             board.set(nx, ny, CellSafety::Safe);
                             if board.suggestion().is_none() {
@@ -56,7 +58,7 @@ impl TrivialAnalysis {
                     }
                 }
             } else if flagged_neighbors + unopened_neighbors == n && unopened_neighbors > 0 {
-                // All unresolved neighbors are mines
+                // All adjacent unresolved cells are mines
                 board.set(x, y, CellSafety::Resolved(n));
                 for nx in x.saturating_sub(1)..=(x + 1).min(board.width() - 1) {
                     for ny in y.saturating_sub(1)..=(y + 1).min(board.height() - 1) {
@@ -65,7 +67,7 @@ impl TrivialAnalysis {
                         }
                         if matches!(
                             board.get(nx, ny),
-                            Some(CellSafety::Unhandled) | Some(CellSafety::Probability { .. })
+                            Some(CellSafety::Wilderness | CellSafety::Frontier | CellSafety::Probability { .. })
                         ) {
                             board.set(nx, ny, CellSafety::Mine);
 

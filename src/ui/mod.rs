@@ -5,6 +5,7 @@ pub mod skin;
 use crate::{base::board, config::GlobalConfig, engine::analysis, ui::overlay::AnalysisOverlayMessage};
 use iced::{Function, Task};
 use log::{debug, error, trace};
+use std::ops::Not;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TextInputType {
@@ -57,6 +58,8 @@ impl MainWindow {
             skin: "WoM Light".to_string(),
             cell_size: 24,
             board: [30, 16, 99],
+            show_probabilities: false,
+            analysis_admit_flags: true,
         };
         let board = Box::new(board::StandardBoard::new(
             config.board[0],
@@ -93,12 +96,12 @@ impl MainWindow {
         ];
         let analysis_overlay = overlay::AnalysisOverlay::new(
             crate::engine::analysis::default_engine(),
-            true,
+            config.analysis_admit_flags,
             game.as_ref().map(|game| game.game_area()).unwrap_or_default(),
             game.as_ref().map(|game| game.board_area()).unwrap_or_default(),
             iced::Rectangle::default(),
             config.cell_size,
-            false,
+            config.show_probabilities,
         );
         (
             Self {
@@ -150,23 +153,15 @@ impl MainWindow {
                                     self.config.board[2].to_string(),
                                     self.config.cell_size.to_string(),
                                 ];
-                                self.analysis_overlay = overlay::AnalysisOverlay::new(
-                                    crate::engine::analysis::default_engine(),
-                                    true,
-                                    game.game_area(),
-                                    game.board_area(),
-                                    self.viewport,
-                                    self.config.cell_size,
-                                    false,
-                                );
+                                self.analysis_overlay.clear_analysis();
+                                self.analysis_overlay.update(overlay::AnalysisOverlayMessage::Resize {
+                                    cell_size: self.config.cell_size,
+                                    game_area: game.game_area(),
+                                    board_area: game.board_area(),
+                                });
                             });
                         if let Some(game) = &mut self.game {
                             game.update(game::GameMessage::ViewportChanged(self.viewport));
-                            if game.board().state().is_end() {
-                                self.analysis_overlay.clear_analysis();
-                            } else {
-                                self.analysis_overlay.set_viewport(self.viewport);
-                            }
                         }
                         return Task::none();
                     }
@@ -255,7 +250,7 @@ impl MainWindow {
                 if let Some(game) = &mut self.game
                     && let Some(skin) = &self.skin
                 {
-                    game.update(game::GameMessage::Resize(self.config.cell_size, skin.clone()));
+                    game.update(game::GameMessage::Resize(self.config.cell_size, Box::new(skin.clone())));
                     self.analysis_overlay.update(overlay::AnalysisOverlayMessage::Resize {
                         cell_size: self.config.cell_size,
                         game_area: game.game_area(),
@@ -290,15 +285,32 @@ impl MainWindow {
                     self.analysis_overlay.set_viewport(self.viewport);
                 }
             },
-            MainWindowMessage::Analysis(msg) => {
-                let set_enable = matches!(msg, AnalysisOverlayMessage::SetEnabled(true));
-                self.analysis_overlay.update(msg);
-                if set_enable && let Some(game) = &self.game {
-                    return self
-                        .analysis_overlay
-                        .update_analysis(game.board())
-                        .map(MainWindowMessage::Analysis);
-                }
+            MainWindowMessage::Analysis(msg) => match &msg {
+                AnalysisOverlayMessage::SetEnabled(true) => {
+                    self.config.show_probabilities = true;
+                    self.analysis_overlay.update(msg);
+                    if let Some(game) = &self.game {
+                        return self
+                            .analysis_overlay
+                            .update_analysis(game.board())
+                            .map(MainWindowMessage::Analysis);
+                    }
+                },
+                AnalysisOverlayMessage::SetEnabled(false) => {
+                    self.config.show_probabilities = false;
+                    self.analysis_overlay.update(msg);
+                },
+                AnalysisOverlayMessage::SetAdmitFlags(admit_flags) => {
+                    self.config.analysis_admit_flags = *admit_flags;
+                    self.analysis_overlay.update(msg);
+                    if let Some(game) = &self.game {
+                        return self
+                            .analysis_overlay
+                            .update_analysis(game.board())
+                            .map(MainWindowMessage::Analysis);
+                    }
+                },
+                _ => self.analysis_overlay.update(msg),
             },
         };
         Task::none()
@@ -346,6 +358,16 @@ impl MainWindow {
             text_color,
             ..Default::default()
         };
+        let button_style_disabled = iced::widget::button::Style {
+            background: Some(iced::Background::Color(base_color)),
+            border: iced::Border {
+                color: upper_color,
+                width: 2.0,
+                radius: iced::border::radius(4.0),
+            },
+            text_color: upper_color,
+            ..Default::default()
+        };
         let check_box_style = iced::widget::checkbox::Style {
             background: iced::Background::Color(iced::Color::TRANSPARENT),
             border: iced::Border {
@@ -355,6 +377,16 @@ impl MainWindow {
             },
             icon_color: text_color,
             text_color: Some(text_color),
+        };
+        let check_box_style_disabled = iced::widget::checkbox::Style {
+            background: iced::Background::Color(iced::Color::TRANSPARENT),
+            border: iced::Border {
+                color: upper_color,
+                width: 2.0,
+                radius: iced::border::radius(4.0),
+            },
+            icon_color: upper_color,
+            text_color: Some(upper_color),
         };
 
         let board_control = iced::widget::container(
@@ -394,14 +426,50 @@ impl MainWindow {
                 ]
                 .align_y(iced::alignment::Vertical::Center),
                 iced::widget::center_x(
-                    iced::widget::button("New Game")
+                    iced::widget::button(iced::widget::text("New Game").align_x(iced::alignment::Horizontal::Center))
+                        .width(120.0)
                         .style(move |_, state| if state == iced::widget::button::Status::Pressed {
                             button_style_press
                         } else {
                             button_style
                         })
                         .on_press(MainWindowMessage::Game(game::GameMessage::FaceClicked))
-                )
+                ),
+                iced::widget::center_x(
+                    iced::widget::button(iced::widget::text("Continue").align_x(iced::alignment::Horizontal::Center))
+                        .width(120.0)
+                        .style(move |_, state| {
+                            if state == iced::widget::button::Status::Disabled {
+                                button_style_disabled
+                            } else if state == iced::widget::button::Status::Pressed {
+                                button_style_press
+                            } else {
+                                button_style
+                            }
+                        })
+                        .on_press_maybe(self.game.as_ref().and_then(|game| {
+                            matches!(game.board().state(), board::BoardState::Lost { .. })
+                                .then_some(MainWindowMessage::Game(game::GameMessage::Continue))
+                        }))
+                ),
+                iced::widget::center_x(
+                    iced::widget::button(iced::widget::text("Replay").align_x(iced::alignment::Horizontal::Center))
+                        .width(120.0)
+                        .style(move |_, state| {
+                            if state == iced::widget::button::Status::Disabled {
+                                button_style_disabled
+                            } else if state == iced::widget::button::Status::Pressed {
+                                button_style_press
+                            } else {
+                                button_style
+                            }
+                        })
+                        .on_press_maybe(self.game.as_ref().and_then(|game| {
+                            matches!(game.board().state(), board::BoardState::NotStarted)
+                                .not()
+                                .then_some(MainWindowMessage::Game(game::GameMessage::Replay))
+                        }))
+                ),
             ]
             .spacing(4)
             .padding(6),
@@ -442,12 +510,24 @@ impl MainWindow {
                     .label("Left-click chord")
                     .style(move |_, _| check_box_style)
                     .on_toggle(MainWindowMessage::ChordModeToggled),
-                iced::widget::checkbox(self.analysis_overlay.enabled())
+                iced::widget::checkbox(self.config.show_probabilities)
                     .label("Show Probability")
                     .style(move |_, _| check_box_style)
                     .on_toggle(
                         |enabled| MainWindowMessage::Analysis(overlay::AnalysisOverlayMessage::SetEnabled(enabled))
                     ),
+                iced::widget::checkbox(self.config.analysis_admit_flags)
+                    .label("Admits Flags")
+                    .style(
+                        move |_, state| if matches!(state, iced::widget::checkbox::Status::Disabled { .. }) {
+                            check_box_style_disabled
+                        } else {
+                            check_box_style
+                        }
+                    )
+                    .on_toggle_maybe(self.config.show_probabilities.then_some(|admit_flags| {
+                        MainWindowMessage::Analysis(overlay::AnalysisOverlayMessage::SetAdmitFlags(admit_flags))
+                    })),
                 cell_size
             ]
             .spacing(4)
