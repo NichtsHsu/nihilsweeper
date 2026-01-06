@@ -313,7 +313,7 @@ impl ProbabilityCalculator {
 
         // Mark as processed
         witnesses[wit_idx].processed = true;
-        for &b_idx in &witness_boxes {
+        for &b_idx in &new_boxes {
             boxes[b_idx].processed = true;
         }
 
@@ -689,6 +689,62 @@ mod tests {
                     other => panic!("Expected Probability at ({}, {}), got {:?}", x, y, other),
                 }
             }
+        }
+    }
+
+    #[test]
+    fn test_complex_constraints() {
+        // Test a more complex scenario with multiple constraints
+        // Layout:
+        // ? ? ?
+        // 2 2 2
+        // ? ? ?
+        let mut cell_states = Vec2D::filled(3, 3, board::CellState::Closed);
+        cell_states[(0, 1)] = board::CellState::Opening(2);
+        cell_states[(1, 1)] = board::CellState::Opening(2);
+        cell_states[(2, 1)] = board::CellState::Opening(2);
+
+        let board_safety = BoardSafety::new(&cell_states, 2, false);
+        let calculator = ProbabilityCalculator::new(false);
+        let result = calculator.calculate(board_safety).unwrap();
+
+        // All frontier cells should have probabilities
+        for x in 0..3 {
+            for y in [0, 2] {
+                match result.get(x, y) {
+                    Some(CellSafety::Probability(_)) | Some(CellSafety::Safe) | Some(CellSafety::Mine) => {},
+                    other => panic!("Expected determined state at ({}, {}), got {:?}", x, y, other),
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_all_mines_determined() {
+        // Test that 100% probability becomes Mine
+        // Layout:
+        // 1 1
+        // ? M
+        // With 1 mine total and the bottom-right already flagged,
+        // the bottom-left must be safe (0% mine probability)
+        let mut cell_states = Vec2D::filled(2, 2, board::CellState::Closed);
+        cell_states[(0, 0)] = board::CellState::Opening(1);
+        cell_states[(1, 0)] = board::CellState::Opening(1);
+        cell_states[(1, 1)] = board::CellState::Flagged;
+
+        let board_safety = BoardSafety::new(&cell_states, 1, true);
+        
+        // First run trivial to resolve the obvious
+        let trivial = super::super::trivial::TrivialAnalysis::new(false);
+        let intermediate = trivial.calculate(board_safety).unwrap();
+        
+        let calculator = ProbabilityCalculator::new(false);
+        let result = calculator.calculate(intermediate).unwrap();
+
+        // The bottom-left cell should be safe
+        match result.get(0, 1) {
+            Some(CellSafety::Safe) => {},
+            other => panic!("Expected Safe at (0, 1), got {:?}", other),
         }
     }
 }
