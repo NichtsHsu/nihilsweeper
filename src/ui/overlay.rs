@@ -228,7 +228,7 @@ impl canvas::Program<super::MainWindowMessage> for AnalysisOverlay {
                                         0.0,
                                     );
                                     
-                                    // Scale probability to 0.0-100.0 and format with 3 significant digits
+                                    // Scale probability to 0.0-100.0 and format with 3 decimal places
                                     let probability_percent = cell_probability.mine_probability * 100.0;
                                     let probability_text = format!("{:.3}", probability_percent);
                                     
