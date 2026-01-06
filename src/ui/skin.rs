@@ -11,6 +11,7 @@ mod config {
     #[derive(Clone, Debug, Default, Deserialize)]
     pub struct Skin {
         pub name: String,
+        pub light: bool,
         pub background_color: u32,
         pub highlight_color: u32,
         pub shadow_color: u32,
@@ -82,6 +83,7 @@ mod build {
     #[derive(Debug, Clone)]
     pub struct Skin {
         pub name: String,
+        pub light: bool,
         pub background_color: iced::Color,
         pub highlight_color: iced::Color,
         pub shadow_color: iced::Color,
@@ -281,6 +283,7 @@ mod build {
             debug!("Skin built successfully: {}", self.config.name);
             Ok(Skin {
                 name: self.config.name.clone(),
+                light: self.config.light,
                 background_color: iced::Color::from_rgb8(
                     ((self.config.background_color >> 16) & 0xFF) as u8,
                     ((self.config.background_color >> 8) & 0xFF) as u8,

@@ -31,7 +31,7 @@ struct Box {
 struct ProbabilityLine {
     mine_count: usize,
     solution_count: f64,
-    mine_box_count: Vec<f64>, // count of mines in each box weighted by solutions
+    mine_box_count: Vec<f64>,    // count of mines in each box weighted by solutions
     allocated_mines: Vec<usize>, // actual number of mines allocated to each box
 }
 
@@ -85,11 +85,8 @@ impl ProbabilityCalculator {
                             if nx == x && ny == y {
                                 continue;
                             }
-                            match board.get(nx, ny) {
-                                Some(CellSafety::Frontier | CellSafety::Wilderness) => {
-                                    adjacent_frontier.insert((nx, ny));
-                                },
-                                _ => {},
+                            if let Some(CellSafety::Frontier | CellSafety::Wilderness) = board.get(nx, ny) {
+                                adjacent_frontier.insert((nx, ny));
                             }
                         }
                     }
@@ -147,11 +144,11 @@ impl ProbabilityCalculator {
                     if nx == x && ny == y {
                         continue;
                     }
-                    if let Some(&box_idx) = frontier_to_box.get(&(nx, ny)) {
-                        if !witness.boxes.contains(&box_idx) {
-                            witness.boxes.push(box_idx);
-                            boxes[box_idx].witnesses.push(wit_idx);
-                        }
+                    if let Some(&box_idx) = frontier_to_box.get(&(nx, ny))
+                        && !witness.boxes.contains(&box_idx)
+                    {
+                        witness.boxes.push(box_idx);
+                        boxes[box_idx].witnesses.push(wit_idx);
                     }
                 }
             }
@@ -161,7 +158,7 @@ impl ProbabilityCalculator {
     }
 
     /// Find the first unprocessed witness
-    fn find_first_witness<'a>(&self, witnesses: &'a [Witness]) -> Option<usize> {
+    fn find_first_witness(&self, witnesses: &[Witness]) -> Option<usize> {
         witnesses.iter().position(|w| !w.processed)
     }
 
@@ -174,11 +171,7 @@ impl ProbabilityCalculator {
             for &wit_idx in &box_data.witnesses {
                 let witness = &witnesses[wit_idx];
                 if !witness.processed {
-                    let todo = witness
-                        .boxes
-                        .iter()
-                        .filter(|&&b_idx| !boxes[b_idx].processed)
-                        .count();
+                    let todo = witness.boxes.iter().filter(|&&b_idx| !boxes[b_idx].processed).count();
                     if todo == 0 {
                         return Some(wit_idx);
                     } else if todo < best_todo {
@@ -193,12 +186,7 @@ impl ProbabilityCalculator {
     }
 
     /// Count mines already placed in old boxes for this witness
-    fn count_placed_mines(
-        &self,
-        pl: &ProbabilityLine,
-        witness_boxes: &[usize],
-        boxes: &[Box],
-    ) -> usize {
+    fn count_placed_mines(&self, pl: &ProbabilityLine, witness_boxes: &[usize], boxes: &[Box]) -> usize {
         witness_boxes
             .iter()
             .filter(|&&b_idx| boxes[b_idx].processed)
@@ -301,14 +289,7 @@ impl ProbabilityCalculator {
                 continue;
             } else {
                 let to_place = missing_mines - placed_mines;
-                new_probs.extend(self.distribute_mines(
-                    &pl,
-                    boxes,
-                    to_place,
-                    &new_boxes,
-                    0,
-                    max_total_mines,
-                ));
+                new_probs.extend(self.distribute_mines(&pl, boxes, to_place, &new_boxes, 0, max_total_mines));
             }
         }
 
@@ -459,13 +440,8 @@ impl AnalysisEngine for ProbabilityCalculator {
         let mut current_witness = self.find_first_witness(&witnesses);
 
         while let Some(wit_idx) = current_witness {
-            working_probs = self.merge_probabilities(
-                working_probs,
-                wit_idx,
-                &mut witnesses,
-                &mut boxes,
-                max_total_mines,
-            );
+            working_probs =
+                self.merge_probabilities(working_probs, wit_idx, &mut witnesses, &mut boxes, max_total_mines);
 
             current_witness = self.find_next_witness(&witnesses, &boxes);
 
@@ -474,12 +450,7 @@ impl AnalysisEngine for ProbabilityCalculator {
                 // Check for any remaining unprocessed witnesses
                 if let Some(next_wit) = self.find_first_witness(&witnesses) {
                     // Store current probabilities and start new group
-                    held_probs = self.store_probabilities(
-                        held_probs,
-                        working_probs,
-                        max_total_mines,
-                        box_count,
-                    );
+                    held_probs = self.store_probabilities(held_probs, working_probs, max_total_mines, box_count);
                     working_probs = vec![ProbabilityLine::new(box_count)];
                     current_witness = Some(next_wit);
                 }
@@ -522,11 +493,7 @@ impl AnalysisEngine for ProbabilityCalculator {
                         if board.suggestion().is_none() {
                             board.suggest(x, y);
                             if self.stop_on_first_safe {
-                                trace!(
-                                    "ProbabilityCalculator: Found safe cell at ({}, {}), stopping",
-                                    x,
-                                    y
-                                );
+                                trace!("ProbabilityCalculator: Found safe cell at ({}, {}), stopping", x, y);
                                 return Ok(board);
                             }
                         }
@@ -537,6 +504,7 @@ impl AnalysisEngine for ProbabilityCalculator {
                             x,
                             y,
                             CellSafety::Probability(CellProbability {
+                                frontier: true,
                                 mine_probability: probability,
                                 ..Default::default()
                             }),
@@ -566,6 +534,7 @@ impl AnalysisEngine for ProbabilityCalculator {
                             x,
                             y,
                             CellSafety::Probability(CellProbability {
+                                frontier: false,
                                 mine_probability: off_edge_prob,
                                 ..Default::default()
                             }),
@@ -639,7 +608,7 @@ mod tests {
     #[test]
     fn test_certain_safe() {
         // Create a board where we can deduce a safe cell through probability
-        // This is a case that TrivialAnalysis should normally handle, 
+        // This is a case that TrivialAnalysis should normally handle,
         // but we test it directly here
         // Layout:
         // 1 1
@@ -650,7 +619,7 @@ mod tests {
         cell_states[(1, 1)] = board::CellState::Flagged;
 
         let board_safety = BoardSafety::new(&cell_states, 1, true);
-        
+
         // First run trivial analysis to resolve the obvious case
         let trivial = super::super::trivial::TrivialAnalysis::new(false);
         let result = trivial.calculate(board_safety).unwrap();
@@ -734,11 +703,11 @@ mod tests {
         cell_states[(1, 1)] = board::CellState::Flagged;
 
         let board_safety = BoardSafety::new(&cell_states, 1, true);
-        
+
         // First run trivial to resolve the obvious
         let trivial = super::super::trivial::TrivialAnalysis::new(false);
         let intermediate = trivial.calculate(board_safety).unwrap();
-        
+
         let calculator = ProbabilityCalculator::new(false);
         let result = calculator.calculate(intermediate).unwrap();
 

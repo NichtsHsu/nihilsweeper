@@ -104,6 +104,7 @@ impl MainWindow {
             iced::Rectangle::default(),
             config.cell_size,
             config.show_probabilities,
+            skin.as_ref().is_some_and(|s| s.light),
         );
         (
             Self {
