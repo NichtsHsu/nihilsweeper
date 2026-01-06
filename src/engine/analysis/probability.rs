@@ -2,6 +2,11 @@ use super::{AnalysisEngine, BoardSafety, CellProbability, CellSafety};
 use log::trace;
 use std::collections::{HashMap, HashSet};
 
+// Maximum safe values for binomial coefficient calculation before f64 overflow
+// C(170, 85) is near the maximum representable value in f64 (~10^308)
+const MAX_BINOMIAL_N: usize = 170;
+const MAX_BINOMIAL_K: usize = 85;
+
 #[derive(Debug, Clone, Default)]
 pub struct ProbabilityCalculator {
     stop_on_first_safe: bool,
@@ -506,13 +511,13 @@ impl AnalysisEngine for ProbabilityCalculator {
             if pl.mine_count >= min_total_mines {
                 let off_edge_mines = mines_left.saturating_sub(pl.mine_count);
                 
-                // For small wilderness counts, use binomial. For large ones, avoid it.
-                let (mult, use_binomial) = if tiles_off_edge <= 170 && off_edge_mines <= 85 {
-                    // Safe to use binomial for small boards
+                // For small wilderness counts, use binomial. For large ones, avoid it to prevent overflow.
+                let (mult, use_binomial) = if tiles_off_edge <= MAX_BINOMIAL_N && off_edge_mines <= MAX_BINOMIAL_K {
+                    // Safe to use binomial for boards within safe limits
                     (Self::binomial(tiles_off_edge, off_edge_mines), true)
                 } else {
-                    // For large wilderness areas, skip binomial weighting
-                    // This is an approximation that avoids overflow
+                    // For large wilderness areas, skip binomial weighting to avoid overflow to NaN/infinity
+                    // This provides an approximation that's accurate for large uniform probability distributions
                     (1.0, false)
                 };
                 
@@ -525,12 +530,13 @@ impl AnalysisEngine for ProbabilityCalculator {
                 }
                 
                 // For wilderness, accumulate weighted values
+                let base_weight = pl.solution_count * off_edge_mines as f64;
                 if use_binomial {
-                    wilderness_weighted_mines += mult * pl.solution_count * off_edge_mines as f64;
+                    wilderness_weighted_mines += mult * base_weight;
                     wilderness_weighted_solutions += weight;
                 } else {
                     // Without binomial, weight by solution count only
-                    wilderness_weighted_mines += pl.solution_count * off_edge_mines as f64;
+                    wilderness_weighted_mines += base_weight;
                     wilderness_weighted_solutions += pl.solution_count;
                 }
             }
@@ -804,21 +810,21 @@ mod tests {
     fn test_large_board_no_overflow() {
         // Test that large boards with many wilderness cells don't overflow to NaN
         // This tests the binomial overflow prevention for wilderness cells
-        let mut cell_states = Vec2D::filled(30, 30, board::CellState::Closed);
+        const BOARD_SIZE: usize = 30;
+        const EXPERT_MINE_COUNT: usize = 99; // Standard expert difficulty: 30×30 with 99 mines
+        
+        let mut cell_states = Vec2D::filled(BOARD_SIZE, BOARD_SIZE, board::CellState::Closed);
         // Open one cell in the corner
         cell_states[(0, 0)] = board::CellState::Opening(1);
-        
-        let total_cells = 30 * 30;
-        let mine_count = 99;  // Expert level mine count
 
-        let board_safety = BoardSafety::new(&cell_states, mine_count, false);
+        let board_safety = BoardSafety::new(&cell_states, EXPERT_MINE_COUNT, false);
         let calculator = ProbabilityCalculator::new(false);
         let result = calculator.calculate(board_safety).unwrap();
 
         // Check that wilderness cells have valid probabilities (not NaN or infinity)
         let mut wilderness_count = 0;
-        for x in 0..30 {
-            for y in 0..30 {
+        for x in 0..BOARD_SIZE {
+            for y in 0..BOARD_SIZE {
                 if x == 0 && y == 0 {
                     continue; // Skip opened cell
                 }
