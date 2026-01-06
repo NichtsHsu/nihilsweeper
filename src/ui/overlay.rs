@@ -228,9 +228,22 @@ impl canvas::Program<super::MainWindowMessage> for AnalysisOverlay {
                                         0.0,
                                     );
                                     
-                                    // Scale probability to 0.0-100.0 and format with 3 decimal places
+                                    // Scale probability to 0.0-100.0 and format with up to 3 total digits
                                     let probability_percent = cell_probability.mine_probability * 100.0;
-                                    let probability_text = format!("{:.3}", probability_percent);
+                                    
+                                    // Format to show meaningful digits (rounded)
+                                    // Examples: 12.345 -> 12.3, 0.01234 -> 0.01, 45.98 -> 46.0
+                                    let probability_text = if probability_percent == 0.0 {
+                                        "0.0".to_string()
+                                    } else if probability_percent >= 100.0 {
+                                        "100".to_string()
+                                    } else if probability_percent >= 10.0 {
+                                        // For values >= 10, show 1 decimal place (e.g., 12.3, 46.0)
+                                        format!("{:.1}", probability_percent)
+                                    } else {
+                                        // For values < 10, show 2 decimal places (e.g., 1.23, 0.01)
+                                        format!("{:.2}", probability_percent)
+                                    };
                                     
                                     // Draw text centered in the cell
                                     let cell_pos = self.cell_position(x, y);
