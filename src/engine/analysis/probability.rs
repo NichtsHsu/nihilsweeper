@@ -401,8 +401,42 @@ impl AnalysisEngine for ProbabilityCalculator {
     fn calculate(&self, mut board: BoardSafety) -> super::error::Result<BoardSafety> {
         let (mut witnesses, mut boxes) = self.build_witnesses_and_boxes(&board);
 
+        // Special case: no witnesses or boxes means all cells are wilderness (game not started)
+        // All cells have uniform probability
         if witnesses.is_empty() || boxes.is_empty() {
-            trace!("ProbabilityCalculator: No witnesses or boxes found");
+            trace!("ProbabilityCalculator: No witnesses or boxes found - calculating uniform probability");
+            
+            // Count all wilderness cells
+            let mut total_cells = 0;
+            for y in 0..board.height() {
+                for x in 0..board.width() {
+                    if matches!(board.get(x, y), Some(CellSafety::Wilderness)) {
+                        total_cells += 1;
+                    }
+                }
+            }
+            
+            // Calculate uniform probability for all wilderness cells
+            if total_cells > 0 {
+                let mines_left = board.mines();
+                let uniform_probability = mines_left as f32 / total_cells as f32;
+                
+                for y in 0..board.height() {
+                    for x in 0..board.width() {
+                        if matches!(board.get(x, y), Some(CellSafety::Wilderness)) {
+                            board.set(
+                                x,
+                                y,
+                                CellSafety::Probability(CellProbability {
+                                    mine_probability: uniform_probability,
+                                    ..Default::default()
+                                }),
+                            );
+                        }
+                    }
+                }
+            }
+            
             return Ok(board);
         }
 
@@ -715,6 +749,40 @@ mod tests {
         match result.get(0, 1) {
             Some(CellSafety::Safe) => {},
             other => panic!("Expected Safe at (0, 1), got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_uniform_probability_no_opened_cells() {
+        // Test that when no cells are opened (game not started), 
+        // all cells get uniform probability
+        let cell_states = Vec2D::filled(5, 5, board::CellState::Closed);
+        let total_cells = 25;
+        let mine_count = 5;
+
+        let board_safety = BoardSafety::new(&cell_states, mine_count, false);
+        let calculator = ProbabilityCalculator::new(false);
+        let result = calculator.calculate(board_safety).unwrap();
+
+        // All cells should have uniform probability = mine_count / total_cells
+        let expected_probability = mine_count as f32 / total_cells as f32;
+        
+        for x in 0..5 {
+            for y in 0..5 {
+                match result.get(x, y) {
+                    Some(CellSafety::Probability(prob)) => {
+                        assert!(
+                            (prob.mine_probability - expected_probability).abs() < 0.0001,
+                            "Expected probability {} at ({}, {}), got {}",
+                            expected_probability,
+                            x,
+                            y,
+                            prob.mine_probability
+                        );
+                    },
+                    other => panic!("Expected Probability at ({}, {}), got {:?}", x, y, other),
+                }
+            }
         }
     }
 }
