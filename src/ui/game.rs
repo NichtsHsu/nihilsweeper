@@ -441,12 +441,12 @@ impl Game {
         )
     }
 
-    pub fn update(&mut self, message: GameMessage) {
+    pub fn update(&mut self, message: GameMessage) -> bool {
         match message {
             GameMessage::Board(board_msg) => {
                 if self.board.state().is_end() {
                     trace!("Board is in end state ({:?}), ignoring input", self.board.state());
-                    return;
+                    return false;
                 }
                 match board_msg {
                     BoardMessage::Left { x, y } => {
@@ -460,11 +460,13 @@ impl Game {
                     },
                 }
                 self.foreground_cache.clear();
+                return true;
             },
             GameMessage::FaceClicked => {
                 debug!("Face clicked, resetting the board");
                 self.board.reset();
                 self.foreground_cache.clear();
+                return true;
             },
             GameMessage::PressedPositionChanged => {
                 self.foreground_cache.clear();
@@ -496,8 +498,10 @@ impl Game {
                 debug!("Replaying the current game, resetting the board");
                 self.board.replay();
                 self.foreground_cache.clear();
+                return true;
             },
         }
+        false
     }
 
     pub fn view(&self) -> iced::Element<'_, GameMessage> {

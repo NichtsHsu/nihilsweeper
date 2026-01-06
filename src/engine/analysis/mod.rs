@@ -1,6 +1,6 @@
 use core::f32;
 
-use crate::base::board;
+use crate::base::{Vec2D, board};
 use itertools::iproduct;
 
 pub mod brute_force;
@@ -70,14 +70,14 @@ pub struct BoardSafety {
 }
 
 impl BoardSafety {
-    pub fn new(board: &dyn board::Board, admit_flags: bool) -> Self {
+    pub fn new(cell_states: &Vec2D<board::CellState>, mines: usize, admit_flags: bool) -> Self {
         let check_frontier = |x: usize, y: usize| {
-            for nx in x.saturating_sub(1)..=(x + 1).min(board.width() - 1) {
-                for ny in y.saturating_sub(1)..=(y + 1).min(board.height() - 1) {
+            for nx in x.saturating_sub(1)..=(x + 1).min(cell_states.dims().0 - 1) {
+                for ny in y.saturating_sub(1)..=(y + 1).min(cell_states.dims().1 - 1) {
                     if nx == x && ny == y {
                         continue;
                     }
-                    if let Some(board::CellState::Opening(_)) = board.cell_state(nx, ny) {
+                    if let board::CellState::Opening(_) = cell_states[(nx, ny)] {
                         return CellSafety::Frontier;
                     }
                 }
@@ -85,8 +85,8 @@ impl BoardSafety {
             CellSafety::Wilderness
         };
 
-        let cells = iproduct![0..board.height(), 0..board.width()]
-            .map(|(y, x)| match board.cell_state(x, y).unwrap() {
+        let cells = iproduct![0..cell_states.dims().1, 0..cell_states.dims().0]
+            .map(|(y, x)| match cell_states[(x, y)] {
                 board::CellState::Opening(0) => CellSafety::Resolved(0),
                 board::CellState::Opening(number) => CellSafety::Unresolved(number),
                 board::CellState::Flagged if admit_flags => CellSafety::Mine,
@@ -96,9 +96,9 @@ impl BoardSafety {
 
         BoardSafety {
             cells,
-            width: board.width(),
-            height: board.height(),
-            mines: board.mines(),
+            width: cell_states.dims().0,
+            height: cell_states.dims().1,
+            mines,
             suggestion: None,
         }
     }

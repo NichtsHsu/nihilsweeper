@@ -45,6 +45,8 @@ pub struct MainWindow {
     text_input_states: [String; 4],
     analysis_overlay: overlay::AnalysisOverlay,
     viewport: iced::Rectangle,
+    update_analysis_in_progress: bool,
+    update_analysis_scheduled: bool,
 }
 
 impl MainWindow {
@@ -112,6 +114,8 @@ impl MainWindow {
                 text_input_states,
                 viewport: Default::default(),
                 analysis_overlay,
+                update_analysis_in_progress: false,
+                update_analysis_scheduled: false,
             },
             Task::none(),
         )
@@ -168,7 +172,7 @@ impl MainWindow {
                 }
 
                 if let Some(game) = &mut self.game {
-                    game.update(msg);
+                    let should_update_analysis = game.update(msg);
                     if is_face_clicked {
                         self.config.board = [game.board().width(), game.board().height(), game.board().mines()];
                         self.text_input_states = [
@@ -178,10 +182,9 @@ impl MainWindow {
                             self.config.cell_size.to_string(),
                         ];
                     }
-                    return self
-                        .analysis_overlay
-                        .update_analysis(game.board())
-                        .map(MainWindowMessage::Analysis);
+                    if should_update_analysis && let Some(task) = self.update_analysis() {
+                        return task;
+                    }
                 }
             },
             MainWindowMessage::TextInputChanged(input_type, value) => {
@@ -289,25 +292,32 @@ impl MainWindow {
                 AnalysisOverlayMessage::SetEnabled(true) => {
                     self.config.show_probabilities = true;
                     self.analysis_overlay.update(msg);
-                    if let Some(game) = &self.game {
-                        return self
-                            .analysis_overlay
-                            .update_analysis(game.board())
-                            .map(MainWindowMessage::Analysis);
+                    if let Some(task) = self.update_analysis() {
+                        return task;
                     }
                 },
                 AnalysisOverlayMessage::SetEnabled(false) => {
                     self.config.show_probabilities = false;
+                    self.update_analysis_in_progress = false;
+                    self.update_analysis_scheduled = false;
                     self.analysis_overlay.update(msg);
                 },
                 AnalysisOverlayMessage::SetAdmitFlags(admit_flags) => {
                     self.config.analysis_admit_flags = *admit_flags;
                     self.analysis_overlay.update(msg);
-                    if let Some(game) = &self.game {
-                        return self
-                            .analysis_overlay
-                            .update_analysis(game.board())
-                            .map(MainWindowMessage::Analysis);
+                    if let Some(task) = self.update_analysis() {
+                        return task;
+                    }
+                },
+                AnalysisOverlayMessage::AnalysisCompleted(..) => {
+                    self.analysis_overlay.update(msg);
+                    self.update_analysis_in_progress = false;
+                    if self.update_analysis_scheduled {
+                        trace!("Running scheduled analysis update");
+                        self.update_analysis_scheduled = false;
+                        if let Some(task) = self.update_analysis() {
+                            return task;
+                        }
                     }
                 },
                 _ => self.analysis_overlay.update(msg),
@@ -574,5 +584,25 @@ impl MainWindow {
             )),
             _ => None,
         })
+    }
+
+    fn update_analysis(&mut self) -> Option<iced::Task<MainWindowMessage>> {
+        if self.config.show_probabilities
+            && let Some(game) = &self.game
+        {
+            if self.update_analysis_in_progress {
+                trace!("Analysis update already in progress, scheduling another update");
+                self.update_analysis_scheduled = true;
+                return None;
+            }
+            trace!("Starting analysis update");
+            self.update_analysis_in_progress = true;
+            return Some(
+                self.analysis_overlay
+                    .update_analysis(game.board())
+                    .map(MainWindowMessage::Analysis),
+            );
+        }
+        None
     }
 }

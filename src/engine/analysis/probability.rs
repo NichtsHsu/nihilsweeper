@@ -6,9 +6,7 @@ pub struct ProbabilityCalculator {
 }
 
 /// A connected block representing a group of frontier cells and their constraints.
-struct ConnectedBlock {
-
-}
+struct ConnectedBlock {}
 
 impl ProbabilityCalculator {
     pub fn new(stop_on_first_safe: bool) -> Self {

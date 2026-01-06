@@ -70,10 +70,15 @@ impl AnalysisOverlay {
             return iced::Task::none();
         }
         let analysis_engine = Arc::clone(&self.analysis_engine);
-        let board_safety = BoardSafety::new(board, self.analysis_admit_flags);
+        let mines = board.mines();
+        let cell_states = board.cell_states().clone();
+        let admit_flags = self.analysis_admit_flags;
 
         iced::Task::perform(
-            async move { analysis_engine.calculate(board_safety) },
+            async move {
+                let board_safety = BoardSafety::new(&cell_states, mines, admit_flags);
+                analysis_engine.calculate(board_safety)
+            },
             AnalysisOverlayMessage::AnalysisCompleted,
         )
     }

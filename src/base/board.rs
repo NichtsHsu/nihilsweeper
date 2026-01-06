@@ -1,3 +1,4 @@
+use super::Vec2D;
 use rand::{rng, seq::SliceRandom};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -73,9 +74,9 @@ impl BoardState {
         }
     }
 
-    pub fn check_win(&mut self, width: usize, height: usize, mines: usize) {
+    pub fn check_win(&mut self, size: usize, mines: usize) {
         if let BoardState::InProgress { opened_cells, .. } = self
-            && *opened_cells + mines == width * height
+            && *opened_cells + mines == size
         {
             *self = BoardState::Won;
         }
@@ -139,15 +140,25 @@ pub trait Board {
     /// right button release.
     fn chord_click(&mut self, x: usize, y: usize, is_left: bool) -> bool;
 
+    /// Get the current state of the cell at `(x, y)`.
+    ///
     /// *Note*: The implementer must ensure that a `Some(CellState)` is returned when `(x, y)` is
     /// within bounds, so the caller can safely `unwrap()` the result while iterating over
     /// `(0..width(), 0..height())` without causing a panic.
     fn cell_state(&self, x: usize, y: usize) -> Option<CellState>;
 
+    /// Get all cell states.
+    fn cell_states(&self) -> &Vec2D<CellState>;
+
+    /// Get the content of the cell at `(x, y)`.
+    ///
     /// *Note*: The implementer must ensure that a `Some(CellContent)` is returned when `(x, y)` is
     /// within bounds, so the caller can safely `unwrap()` the result while iterating over
     /// `(0..width(), 0..height())` without causing a panic.
     fn cell_content(&self, x: usize, y: usize) -> Option<CellContent>;
+
+    /// Get all cell contents.
+    fn cell_contents(&self) -> &Vec2D<CellContent>;
 
     /// Reset the board.
     fn reset(&mut self);
@@ -161,25 +172,19 @@ pub trait Board {
 
 #[derive(Clone, Debug)]
 pub struct StandardBoard {
-    width: usize,
-    height: usize,
+    cell_contents: Vec2D<CellContent>,
     mines: usize,
     chord_mode: ChordMode,
     state: BoardState,
-    cell_states: Vec<CellState>,
-    cell_contents: Vec<CellContent>,
+    cell_states: Vec2D<CellState>,
 }
 
 impl StandardBoard {
     fn index(&self, x: usize, y: usize) -> Option<usize> {
-        if x >= self.width || y >= self.height {
+        if x >= self.cell_contents.dims().0 || y >= self.cell_contents.dims().1 {
             return None;
         }
-        Some(y * self.width + x)
-    }
-
-    fn index_unchecked(&self, x: usize, y: usize) -> usize {
-        y * self.width + x
+        Some(y * self.cell_contents.dims().0 + x)
     }
 
     fn init(&mut self, click_position: Option<(usize, usize)>) {
@@ -187,11 +192,11 @@ impl StandardBoard {
             return;
         }
         let mut rng = rng();
-        self.cell_contents[..self.mines]
+        self.cell_contents.data_mut()[..self.mines]
             .iter_mut()
             .for_each(|c| *c = CellContent::Mine);
 
-        if self.mines >= self.width * self.height {
+        if self.mines == self.cell_contents.len() {
             self.state = BoardState::InProgress {
                 opened_cells: 0,
                 flags: 0,
@@ -202,26 +207,27 @@ impl StandardBoard {
         if let Some((cx, cy)) = click_position
             && let Some(click_index) = self.index(cx, cy)
         {
+            let len = self.cell_contents.len();
+            let mut data = self.cell_contents.data_mut();
             if cx == 0 && cy == 0 {
                 // Clicked on top-left corner
-                self.cell_contents.swap(0, self.width * self.height - 1);
-                self.cell_contents[1..self.width * self.height].shuffle(&mut rng);
+                data.swap(0, len - 1);
+                data[1..len].shuffle(&mut rng);
             } else {
-                self.cell_contents[..self.width * self.height - 1].shuffle(&mut rng);
-                self.cell_contents[click_index..].rotate_right(1);
-                self.cell_contents[click_index] = CellContent::Empty;
+                data[..len - 1].shuffle(&mut rng);
+                data[click_index..].rotate_right(1);
+                data[click_index] = CellContent::Empty;
             }
         } else {
-            self.cell_contents.shuffle(&mut rng);
+            self.cell_contents.data_mut().shuffle(&mut rng);
         }
 
         // If mine density > 50%, let number cells to count mines.
         // Else let mine cells to add values of number cells.
-        if self.mines * 2 > self.width * self.height {
-            for y in 0..self.height {
-                for x in 0..self.width {
-                    let index = self.index_unchecked(x, y);
-                    if self.cell_contents[index] == CellContent::Mine {
+        if self.mines * 2 > self.cell_contents.len() {
+            for y in 0..self.cell_contents.dims().1 {
+                for x in 0..self.cell_contents.dims().0 {
+                    if self.cell_contents[(x, y)] == CellContent::Mine {
                         continue;
                     }
                     let mut count = 0;
@@ -232,24 +238,23 @@ impl StandardBoard {
                             }
                             let nx = x as isize + dx;
                             let ny = y as isize + dy;
-                            if nx >= 0 && nx < self.width as isize && ny >= 0 && ny < self.height as isize {
-                                let n_index = self.index_unchecked(nx as usize, ny as usize);
-                                if self.cell_contents[n_index] == CellContent::Mine {
-                                    count += 1;
-                                }
+                            if nx >= 0
+                                && ny >= 0
+                                && self.cell_contents.get(nx as usize, ny as usize) == Some(&CellContent::Mine)
+                            {
+                                count += 1;
                             }
                         }
                     }
                     if count > 0 {
-                        self.cell_contents[index] = CellContent::Number(count);
+                        self.cell_contents[(x, y)] = CellContent::Number(count);
                     }
                 }
             }
         } else {
-            for y in 0..self.height {
-                for x in 0..self.width {
-                    let index = self.index_unchecked(x, y);
-                    if self.cell_contents[index] != CellContent::Mine {
+            for y in 0..self.cell_contents.dims().1 {
+                for x in 0..self.cell_contents.dims().0 {
+                    if self.cell_contents[(x, y)] != CellContent::Mine {
                         continue;
                     }
                     for dy in [-1isize, 0, 1] {
@@ -259,9 +264,11 @@ impl StandardBoard {
                             }
                             let nx = x as isize + dx;
                             let ny = y as isize + dy;
-                            if nx >= 0 && nx < self.width as isize && ny >= 0 && ny < self.height as isize {
-                                let n_index = self.index_unchecked(nx as usize, ny as usize);
-                                self.cell_contents[n_index].add_one_mine();
+                            if nx >= 0
+                                && ny >= 0
+                                && let Some(c) = self.cell_contents.get_mut(nx as usize, ny as usize)
+                            {
+                                c.add_one_mine()
                             }
                         }
                     }
@@ -279,35 +286,35 @@ impl StandardBoard {
         if self.state.is_end() {
             return;
         }
-        let Some(index) = self.index(x, y) else {
+        let Some(cell_state) = self.cell_states.get_mut(x, y) else {
             return;
         };
-        if self.cell_states[index] != CellState::Closed && self.cell_states[index] != CellState::Flagged {
+        if *cell_state != CellState::Closed && *cell_state != CellState::Flagged {
             return;
         }
-        match self.cell_contents[index] {
+        match self.cell_contents[(x, y)] {
             CellContent::Mine => {
                 // It's usually not possible to reach here when `CellState::Flagged`, but just in case
-                if self.cell_states[index] == CellState::Closed {
-                    self.cell_states[index] = CellState::Blasted;
+                if *cell_state == CellState::Closed {
+                    *cell_state = CellState::Blasted;
                     self.state.blast(x, y);
                 }
             },
             CellContent::Number(n) => {
-                if self.cell_states[index] == CellState::Flagged {
+                if *cell_state == CellState::Flagged {
                     self.state.flag_removed();
                 }
-                self.cell_states[index] = CellState::Opening(n);
+                *cell_state = CellState::Opening(n);
                 self.state.cell_opened();
-                self.state.check_win(self.width, self.height, self.mines);
+                self.state.check_win(self.cell_contents.len(), self.mines);
             },
             CellContent::Empty => {
-                if self.cell_states[index] == CellState::Flagged {
+                if *cell_state == CellState::Flagged {
                     self.state.flag_removed();
                 }
-                self.cell_states[index] = CellState::Opening(0);
+                *cell_state = CellState::Opening(0);
                 self.state.cell_opened();
-                self.state.check_win(self.width, self.height, self.mines);
+                self.state.check_win(self.cell_contents.len(), self.mines);
                 for dy in [-1isize, 0, 1] {
                     for dx in [-1isize, 0, 1] {
                         if dx == 0 && dy == 0 {
@@ -315,7 +322,7 @@ impl StandardBoard {
                         }
                         let nx = x as isize + dx;
                         let ny = y as isize + dy;
-                        if nx >= 0 && nx < self.width as isize && ny >= 0 && ny < self.height as isize {
+                        if nx >= 0 && ny >= 0 {
                             self.open(nx as usize, ny as usize);
                         }
                     }
@@ -328,27 +335,25 @@ impl StandardBoard {
         width = width.max(1);
         height = height.max(1);
         mines = mines.clamp(1, width * height);
-        let cell_states = vec![CellState::Closed; width * height];
-        let cell_contents = vec![CellContent::Empty; width * height];
+        let cell_contents = Vec2D::new(width, height);
+        let cell_states = Vec2D::new(width, height);
         Self {
-            width,
-            height,
+            cell_contents,
             mines,
             chord_mode,
             state: BoardState::NotStarted,
             cell_states,
-            cell_contents,
         }
     }
 }
 
 impl Board for StandardBoard {
     fn width(&self) -> usize {
-        self.width
+        self.cell_contents.dims().0
     }
 
     fn height(&self) -> usize {
-        self.height
+        self.cell_contents.dims().1
     }
 
     fn mines(&self) -> usize {
@@ -375,9 +380,12 @@ impl Board for StandardBoard {
         if self.state.is_end() {
             return self.state.is_end();
         }
+        if self.cell_contents.get(x, y).is_none() {
+            return self.state.is_end();
+        };
         self.init(Some((x, y)));
         if self.chord_mode == ChordMode::LeftClick
-            && let CellState::Opening(1..) = self.cell_states[self.index_unchecked(x, y)]
+            && let CellState::Opening(1..) = self.cell_states[(x, y)]
         {
             return self.chord_click(x, y, true);
         }
@@ -389,15 +397,18 @@ impl Board for StandardBoard {
         if self.state.is_end() {
             return;
         }
-        let Some(click_index) = self.index(x, y) else {
+        if self.cell_contents.get(x, y).is_none() {
             return;
         };
         self.init(None);
-        if self.cell_states[click_index] == CellState::Closed {
-            self.cell_states[click_index] = CellState::Flagged;
+        let Some(cell_state) = self.cell_states.get_mut(x, y) else {
+            return;
+        };
+        if *cell_state == CellState::Closed {
+            *cell_state = CellState::Flagged;
             self.state.flag_added();
-        } else if self.cell_states[click_index] == CellState::Flagged {
-            self.cell_states[click_index] = CellState::Closed;
+        } else if *cell_state == CellState::Flagged {
+            *cell_state = CellState::Closed;
             self.state.flag_removed();
         }
     }
@@ -409,11 +420,11 @@ impl Board for StandardBoard {
         if self.chord_mode == ChordMode::LeftClick && !is_left {
             return self.state.is_end();
         }
-        let Some(click_index) = self.index(x, y) else {
+        if self.cell_contents.get(x, y).is_none() {
             return self.state.is_end();
         };
         self.init(None);
-        if let CellState::Opening(n @ 1..) = self.cell_states[click_index] {
+        if let CellState::Opening(n @ 1..) = self.cell_states[(x, y)] {
             let mut flagged_count = 0u8;
             for dy in [-1isize, 0, 1] {
                 for dx in [-1isize, 0, 1] {
@@ -422,11 +433,9 @@ impl Board for StandardBoard {
                     }
                     let nx = x as isize + dx;
                     let ny = y as isize + dy;
-                    if nx >= 0 && nx < self.width as isize && ny >= 0 && ny < self.height as isize {
-                        let n_index = self.index_unchecked(nx as usize, ny as usize);
-                        if self.cell_states[n_index] == CellState::Flagged {
-                            flagged_count += 1;
-                        }
+                    if nx >= 0 && ny >= 0 && self.cell_states.get(nx as usize, ny as usize) == Some(&CellState::Flagged)
+                    {
+                        flagged_count += 1;
                     }
                 }
             }
@@ -442,10 +451,9 @@ impl Board for StandardBoard {
                         let nx = x as isize + dx;
                         let ny = y as isize + dy;
                         if nx >= 0
-                            && nx < self.width as isize
                             && ny >= 0
-                            && ny < self.height as isize
-                            && self.cell_states[self.index_unchecked(nx as usize, ny as usize)] != CellState::Flagged
+                            && let Some(cell_state) = self.cell_states.get(nx as usize, ny as usize)
+                            && cell_state != &CellState::Flagged
                         {
                             self.open(nx as usize, ny as usize);
                         }
@@ -458,11 +466,19 @@ impl Board for StandardBoard {
     }
 
     fn cell_state(&self, x: usize, y: usize) -> Option<CellState> {
-        self.index(x, y).map(|i| self.cell_states[i])
+        self.cell_states.get(x, y).cloned()
+    }
+
+    fn cell_states(&self) -> &Vec2D<CellState> {
+        &self.cell_states
     }
 
     fn cell_content(&self, x: usize, y: usize) -> Option<CellContent> {
-        self.index(x, y).map(|i| self.cell_contents[i])
+        self.cell_contents.get(x, y).cloned()
+    }
+
+    fn cell_contents(&self) -> &Vec2D<CellContent> {
+        &self.cell_contents
     }
 
     fn reset(&mut self) {
@@ -486,8 +502,9 @@ impl Board for StandardBoard {
             blasted_cell: (x, y),
         } = self.state
         {
-            let index = self.index_unchecked(x, y);
-            self.cell_states[index] = CellState::Closed;
+            if let Some(cell_state) = self.cell_states.get_mut(x, y) {
+                *cell_state = CellState::Closed;
+            }
             self.state = BoardState::InProgress { opened_cells, flags };
         }
     }
