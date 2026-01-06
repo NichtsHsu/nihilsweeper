@@ -203,24 +203,56 @@ impl canvas::Program<super::MainWindowMessage> for AnalysisOverlay {
                         if let Some(analysis) = &self.analysis_result
                             && let Some(cell_safety) = analysis.get(x, y)
                         {
-                            let overlay_color = match cell_safety {
-                                crate::engine::analysis::CellSafety::Safe => iced::Color::from_rgba(0.0, 1.0, 0.0, 0.5),
-                                crate::engine::analysis::CellSafety::Mine => iced::Color::from_rgba(1.0, 0.0, 0.0, 0.5),
+                            match cell_safety {
+                                crate::engine::analysis::CellSafety::Safe => {
+                                    let overlay_color = iced::Color::from_rgba(0.0, 1.0, 0.0, 0.5);
+                                    frame.fill_rectangle(
+                                        self.cell_position(x, y),
+                                        iced::Size::new(self.cell_size as f32, self.cell_size as f32),
+                                        overlay_color,
+                                    );
+                                },
+                                crate::engine::analysis::CellSafety::Mine => {
+                                    let overlay_color = iced::Color::from_rgba(1.0, 0.0, 0.0, 0.5);
+                                    frame.fill_rectangle(
+                                        self.cell_position(x, y),
+                                        iced::Size::new(self.cell_size as f32, self.cell_size as f32),
+                                        overlay_color,
+                                    );
+                                },
                                 crate::engine::analysis::CellSafety::Probability(cell_probability) => {
-                                    iced::Color::from_rgba(
-                                        cell_probability.mine_probability / 100.0,
-                                        1.0 - cell_probability.mine_probability / 100.0,
+                                    // Calculate color based on mine probability (0.0-1.0 range)
+                                    let text_color = iced::Color::from_rgb(
+                                        cell_probability.mine_probability,
+                                        1.0 - cell_probability.mine_probability,
                                         0.0,
-                                        0.5,
-                                    )
+                                    );
+                                    
+                                    // Scale probability to 0.0-100.0 and format with 3 significant digits
+                                    let probability_percent = cell_probability.mine_probability * 100.0;
+                                    let probability_text = format!("{:.3}", probability_percent);
+                                    
+                                    // Draw text centered in the cell
+                                    let cell_pos = self.cell_position(x, y);
+                                    let text_size = self.cell_size as f32 * 0.25; // Adjust text size relative to cell
+                                    
+                                    // Center the text in the cell by adjusting position
+                                    // Text is drawn from baseline, so we offset it
+                                    let text_position = iced::Point::new(
+                                        cell_pos.x + self.cell_size as f32 * 0.1,
+                                        cell_pos.y + self.cell_size as f32 * 0.5,
+                                    );
+                                    
+                                    frame.fill_text(canvas::Text {
+                                        content: probability_text,
+                                        position: text_position,
+                                        color: text_color,
+                                        size: text_size.into(),
+                                        ..Default::default()
+                                    });
                                 },
                                 _ => break 'no_overlay,
-                            };
-                            frame.fill_rectangle(
-                                self.cell_position(x, y),
-                                iced::Size::new(self.cell_size as f32, self.cell_size as f32),
-                                overlay_color,
-                            );
+                            }
                         };
                     }
                 }
