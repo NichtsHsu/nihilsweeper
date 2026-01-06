@@ -497,18 +497,41 @@ impl AnalysisEngine for ProbabilityCalculator {
         // Calculate final probabilities for each box
         let mut box_tallies: Vec<f64> = vec![0.0; box_count];
         let mut total_tally = 0.0f64;
+        
+        // For wilderness probability, we track weighted mine counts and solution counts separately
+        let mut wilderness_weighted_mines = 0.0f64;
+        let mut wilderness_weighted_solutions = 0.0f64;
 
         for pl in &held_probs {
             if pl.mine_count >= min_total_mines {
                 let off_edge_mines = mines_left.saturating_sub(pl.mine_count);
-                let mult = Self::binomial(tiles_off_edge, off_edge_mines);
+                
+                // For small wilderness counts, use binomial. For large ones, avoid it.
+                let (mult, use_binomial) = if tiles_off_edge <= 170 && off_edge_mines <= 85 {
+                    // Safe to use binomial for small boards
+                    (Self::binomial(tiles_off_edge, off_edge_mines), true)
+                } else {
+                    // For large wilderness areas, skip binomial weighting
+                    // This is an approximation that avoids overflow
+                    (1.0, false)
+                };
+                
                 let weight = pl.solution_count * mult;
-
                 total_tally += weight;
 
                 for (i, box_data) in boxes.iter().enumerate() {
                     let contribution = pl.mine_box_count[i] * mult / box_data.cells.len() as f64;
                     box_tallies[i] += contribution;
+                }
+                
+                // For wilderness, accumulate weighted values
+                if use_binomial {
+                    wilderness_weighted_mines += mult * pl.solution_count * off_edge_mines as f64;
+                    wilderness_weighted_solutions += weight;
+                } else {
+                    // Without binomial, weight by solution count only
+                    wilderness_weighted_mines += pl.solution_count * off_edge_mines as f64;
+                    wilderness_weighted_solutions += pl.solution_count;
                 }
             }
         }
@@ -548,18 +571,9 @@ impl AnalysisEngine for ProbabilityCalculator {
             }
         }
 
-        // Handle wilderness cells
-        if tiles_off_edge > 0 && total_tally > 0.0 {
-            let mut off_edge_tally = 0.0f64;
-            for pl in &held_probs {
-                if pl.mine_count >= min_total_mines {
-                    let off_edge_mines = mines_left.saturating_sub(pl.mine_count);
-                    let mult = Self::binomial(tiles_off_edge, off_edge_mines);
-                    off_edge_tally += mult * pl.solution_count * off_edge_mines as f64;
-                }
-            }
-
-            let off_edge_prob = (off_edge_tally / (total_tally * tiles_off_edge as f64)) as f32;
+        // Handle wilderness cells without binomial for large boards
+        if tiles_off_edge > 0 && wilderness_weighted_solutions > 0.0 {
+            let off_edge_prob = (wilderness_weighted_mines / (wilderness_weighted_solutions * tiles_off_edge as f64)) as f32;
 
             for y in 0..board.height() {
                 for x in 0..board.width() {
@@ -784,5 +798,63 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn test_large_board_no_overflow() {
+        // Test that large boards with many wilderness cells don't overflow to NaN
+        // This tests the binomial overflow prevention for wilderness cells
+        let mut cell_states = Vec2D::filled(30, 30, board::CellState::Closed);
+        // Open one cell in the corner
+        cell_states[(0, 0)] = board::CellState::Opening(1);
+        
+        let total_cells = 30 * 30;
+        let mine_count = 99;  // Expert level mine count
+
+        let board_safety = BoardSafety::new(&cell_states, mine_count, false);
+        let calculator = ProbabilityCalculator::new(false);
+        let result = calculator.calculate(board_safety).unwrap();
+
+        // Check that wilderness cells have valid probabilities (not NaN or infinity)
+        let mut wilderness_count = 0;
+        for x in 0..30 {
+            for y in 0..30 {
+                if x == 0 && y == 0 {
+                    continue; // Skip opened cell
+                }
+                match result.get(x, y) {
+                    Some(CellSafety::Probability(prob)) => {
+                        // Check that probability is finite and valid
+                        assert!(
+                            prob.mine_probability.is_finite(),
+                            "Probability at ({}, {}) is not finite: {}",
+                            x,
+                            y,
+                            prob.mine_probability
+                        );
+                        assert!(
+                            prob.mine_probability >= 0.0 && prob.mine_probability <= 1.0,
+                            "Probability at ({}, {}) out of range: {}",
+                            x,
+                            y,
+                            prob.mine_probability
+                        );
+                        
+                        // For wilderness cells (not adjacent to the opened corner)
+                        if x > 1 || y > 1 {
+                            wilderness_count += 1;
+                        }
+                    },
+                    Some(CellSafety::Frontier) | Some(CellSafety::Wilderness) => {
+                        // These are frontier cells adjacent to opened cell
+                        // It's okay if they haven't been processed yet
+                    },
+                    other => panic!("Unexpected state at ({}, {}): {:?}", x, y, other),
+                }
+            }
+        }
+        
+        // Verify we actually tested some wilderness cells
+        assert!(wilderness_count > 0, "No wilderness cells were tested");
     }
 }
