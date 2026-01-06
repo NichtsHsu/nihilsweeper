@@ -30,8 +30,8 @@ struct Box {
 #[derive(Debug, Clone)]
 struct ProbabilityLine {
     mine_count: usize,
-    solution_count: u128,
-    mine_box_count: Vec<u128>, // count of mines in each box weighted by solutions
+    solution_count: f64,
+    mine_box_count: Vec<f64>, // count of mines in each box weighted by solutions
     allocated_mines: Vec<usize>, // actual number of mines allocated to each box
 }
 
@@ -39,8 +39,8 @@ impl ProbabilityLine {
     fn new(box_count: usize) -> Self {
         Self {
             mine_count: 0,
-            solution_count: 1,
-            mine_box_count: vec![0; box_count],
+            solution_count: 1.0,
+            mine_box_count: vec![0.0; box_count],
             allocated_mines: vec![0; box_count],
         }
     }
@@ -52,17 +52,18 @@ impl ProbabilityCalculator {
     }
 
     /// Calculate binomial coefficient C(n, k) = n! / (k! * (n-k)!)
-    fn binomial(n: usize, k: usize) -> u128 {
+    /// Using f64 to avoid arithmetic overflow with large values
+    fn binomial(n: usize, k: usize) -> f64 {
         if k > n {
-            return 0;
+            return 0.0;
         }
         if k == 0 || k == n {
-            return 1;
+            return 1.0;
         }
         let k = k.min(n - k); // Take advantage of symmetry
-        let mut result = 1u128;
+        let mut result = 1.0f64;
         for i in 0..k {
-            result = result * (n - i) as u128 / (i + 1) as u128;
+            result = result * (n - i) as f64 / (i + 1) as f64;
         }
         result
     }
@@ -234,7 +235,7 @@ impl ProbabilityCalculator {
             let combinations = Self::binomial(box_size, missing_mines);
             new_pl.solution_count *= combinations;
             new_pl.mine_count += missing_mines;
-            new_pl.mine_box_count[box_idx] += missing_mines as u128 * combinations;
+            new_pl.mine_box_count[box_idx] += missing_mines as f64 * combinations;
             new_pl.allocated_mines[box_idx] = missing_mines;
             result.push(new_pl);
             return result;
@@ -249,7 +250,7 @@ impl ProbabilityCalculator {
             let combinations = Self::binomial(box_size, mines_here);
             new_pl.solution_count *= combinations;
             new_pl.mine_count += mines_here;
-            new_pl.mine_box_count[box_idx] += mines_here as u128 * combinations;
+            new_pl.mine_box_count[box_idx] += mines_here as f64 * combinations;
             new_pl.allocated_mines[box_idx] = mines_here;
 
             result.extend(self.distribute_mines(
@@ -489,8 +490,8 @@ impl AnalysisEngine for ProbabilityCalculator {
         held_probs = self.store_probabilities(held_probs, working_probs, max_total_mines, box_count);
 
         // Calculate final probabilities for each box
-        let mut box_tallies: Vec<u128> = vec![0; box_count];
-        let mut total_tally = 0u128;
+        let mut box_tallies: Vec<f64> = vec![0.0; box_count];
+        let mut total_tally = 0.0f64;
 
         for pl in &held_probs {
             if pl.mine_count >= min_total_mines {
@@ -501,7 +502,7 @@ impl AnalysisEngine for ProbabilityCalculator {
                 total_tally += weight;
 
                 for (i, box_data) in boxes.iter().enumerate() {
-                    let contribution = pl.mine_box_count[i] * mult / box_data.cells.len() as u128;
+                    let contribution = pl.mine_box_count[i] * mult / box_data.cells.len() as f64;
                     box_tallies[i] += contribution;
                 }
             }
@@ -510,10 +511,10 @@ impl AnalysisEngine for ProbabilityCalculator {
         trace!("ProbabilityCalculator: Total tally = {}", total_tally);
 
         // Update board with calculated probabilities
-        if total_tally > 0 {
+        if total_tally > 0.0 {
             for (i, box_data) in boxes.iter().enumerate() {
                 let tally = box_tallies[i];
-                let probability = tally as f32 / total_tally as f32;
+                let probability = (tally / total_tally) as f32;
 
                 for &(x, y) in &box_data.cells {
                     if probability == 0.0 {
@@ -546,17 +547,17 @@ impl AnalysisEngine for ProbabilityCalculator {
         }
 
         // Handle wilderness cells
-        if tiles_off_edge > 0 && total_tally > 0 {
-            let mut off_edge_tally = 0u128;
+        if tiles_off_edge > 0 && total_tally > 0.0 {
+            let mut off_edge_tally = 0.0f64;
             for pl in &held_probs {
                 if pl.mine_count >= min_total_mines {
                     let off_edge_mines = mines_left.saturating_sub(pl.mine_count);
                     let mult = Self::binomial(tiles_off_edge, off_edge_mines);
-                    off_edge_tally += mult * pl.solution_count * off_edge_mines as u128;
+                    off_edge_tally += mult * pl.solution_count * off_edge_mines as f64;
                 }
             }
 
-            let off_edge_prob = off_edge_tally as f32 / (total_tally as f32 * tiles_off_edge as f32);
+            let off_edge_prob = (off_edge_tally / (total_tally * tiles_off_edge as f64)) as f32;
 
             for y in 0..board.height() {
                 for x in 0..board.width() {
