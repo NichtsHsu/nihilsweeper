@@ -410,22 +410,24 @@ impl AnalysisEngine for ProbabilityCalculator {
         // All cells have uniform probability
         if witnesses.is_empty() || boxes.is_empty() {
             trace!("ProbabilityCalculator: No witnesses or boxes found - calculating uniform probability");
-            
+
             // Count all wilderness cells
             let mut total_cells = 0;
+            let mut mines_left = board.mines();
             for y in 0..board.height() {
                 for x in 0..board.width() {
-                    if matches!(board.get(x, y), Some(CellSafety::Wilderness)) {
-                        total_cells += 1;
+                    match board.get(x, y) {
+                        Some(CellSafety::Mine) => mines_left = mines_left.saturating_sub(1),
+                        Some(CellSafety::Wilderness) => total_cells += 1,
+                        _ => {},
                     }
                 }
             }
-            
+
             // Calculate uniform probability for all wilderness cells
             if total_cells > 0 {
-                let mines_left = board.mines();
                 let uniform_probability = mines_left as f32 / total_cells as f32;
-                
+
                 for y in 0..board.height() {
                     for x in 0..board.width() {
                         if matches!(board.get(x, y), Some(CellSafety::Wilderness)) {
@@ -441,7 +443,7 @@ impl AnalysisEngine for ProbabilityCalculator {
                     }
                 }
             }
-            
+
             return Ok(board);
         }
 
@@ -502,7 +504,7 @@ impl AnalysisEngine for ProbabilityCalculator {
         // Calculate final probabilities for each box
         let mut box_tallies: Vec<f64> = vec![0.0; box_count];
         let mut total_tally = 0.0f64;
-        
+
         // For wilderness probability, we track weighted mine counts and solution counts separately
         let mut wilderness_weighted_mines = 0.0f64;
         let mut wilderness_weighted_solutions = 0.0f64;
@@ -510,7 +512,7 @@ impl AnalysisEngine for ProbabilityCalculator {
         for pl in &held_probs {
             if pl.mine_count >= min_total_mines {
                 let off_edge_mines = mines_left.saturating_sub(pl.mine_count);
-                
+
                 // For small wilderness counts, use binomial. For large ones, avoid it to prevent overflow.
                 let (mult, use_binomial) = if tiles_off_edge <= MAX_BINOMIAL_N && off_edge_mines <= MAX_BINOMIAL_K {
                     // Safe to use binomial for boards within safe limits
@@ -520,7 +522,7 @@ impl AnalysisEngine for ProbabilityCalculator {
                     // This provides an approximation that's accurate for large uniform probability distributions
                     (1.0, false)
                 };
-                
+
                 let weight = pl.solution_count * mult;
                 total_tally += weight;
 
@@ -528,7 +530,7 @@ impl AnalysisEngine for ProbabilityCalculator {
                     let contribution = pl.mine_box_count[i] * mult / box_data.cells.len() as f64;
                     box_tallies[i] += contribution;
                 }
-                
+
                 // For wilderness, accumulate weighted values
                 let base_weight = pl.solution_count * off_edge_mines as f64;
                 if use_binomial {
@@ -579,7 +581,8 @@ impl AnalysisEngine for ProbabilityCalculator {
 
         // Handle wilderness cells without binomial for large boards
         if tiles_off_edge > 0 && wilderness_weighted_solutions > 0.0 {
-            let off_edge_prob = (wilderness_weighted_mines / (wilderness_weighted_solutions * tiles_off_edge as f64)) as f32;
+            let off_edge_prob =
+                (wilderness_weighted_mines / (wilderness_weighted_solutions * tiles_off_edge as f64)) as f32;
 
             for y in 0..board.height() {
                 for x in 0..board.width() {
@@ -605,7 +608,10 @@ impl AnalysisEngine for ProbabilityCalculator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::base::{Vec2D, board};
+    use crate::{
+        base::{Vec2D, board},
+        engine::analysis::trivial,
+    };
 
     #[test]
     fn test_simple_probability() {
@@ -774,7 +780,7 @@ mod tests {
 
     #[test]
     fn test_uniform_probability_no_opened_cells() {
-        // Test that when no cells are opened (game not started), 
+        // Test that when no cells are opened (game not started),
         // all cells get uniform probability
         let cell_states = Vec2D::filled(5, 5, board::CellState::Closed);
         let total_cells = 25;
@@ -786,7 +792,7 @@ mod tests {
 
         // All cells should have uniform probability = mine_count / total_cells
         let expected_probability = mine_count as f32 / total_cells as f32;
-        
+
         for x in 0..5 {
             for y in 0..5 {
                 match result.get(x, y) {
@@ -812,7 +818,7 @@ mod tests {
         // This tests the binomial overflow prevention for wilderness cells
         const BOARD_SIZE: usize = 30;
         const EXPERT_MINE_COUNT: usize = 99; // Standard expert difficulty: 30×30 with 99 mines
-        
+
         let mut cell_states = Vec2D::filled(BOARD_SIZE, BOARD_SIZE, board::CellState::Closed);
         // Open one cell in the corner
         cell_states[(0, 0)] = board::CellState::Opening(1);
@@ -845,7 +851,7 @@ mod tests {
                             y,
                             prob.mine_probability
                         );
-                        
+
                         // For wilderness cells (not adjacent to the opened corner)
                         if x > 1 || y > 1 {
                             wilderness_count += 1;
@@ -859,8 +865,55 @@ mod tests {
                 }
             }
         }
-        
+
         // Verify we actually tested some wilderness cells
         assert!(wilderness_count > 0, "No wilderness cells were tested");
+    }
+
+    #[test]
+    fn test_beginner_board() {
+        // Test a beginner board scenario
+        // Layout:
+        // 1 ? ? ? ? ? 1 0 0
+        // 1 1 1 1 ? ? 2 1 0
+        // 0 0 0 1 2 ? ? 1 0
+        // 0 0 0 0 1 ? 2 1 0
+        // 0 1 1 1 1 ? 1 0 0
+        // 0 1 ? ? ? ? 1 0 0
+        // 0 1 1 1 ? ? 3 2 1
+        // 0 0 0 1 ? ? ? ? ?
+        // 0 0 0 1 ? ? ? ? 1
+        #[rustfmt::skip]
+        let mut cell_states = board::build_cell_states_with_str(
+            "1 ? ? ? ? ? 1 0 0 \
+            1 1 1 1 ? ? 2 1 0 \
+            0 0 0 1 2 ? ? 1 0 \
+            0 0 0 0 1 ? 2 1 0 \
+            0 1 1 1 1 ? 1 0 0 \
+            0 1 ? ? ? ? 1 0 0 \
+            0 1 1 1 ? ? 3 2 1 \
+            0 0 0 1 ? ? ? ? ? \
+            0 0 0 1 ? ? ? ? 1",
+            9,
+            9
+        );
+
+        let board_safety = BoardSafety::new(&cell_states, 10, false);
+        let trivial = super::super::trivial::TrivialAnalysis::new(false);
+        let calculator = ProbabilityCalculator::new(false);
+        let result = trivial
+            .calculate(board_safety)
+            .and_then(|board| calculator.calculate(board))
+            .unwrap();
+
+        // Check cells have probabilities assigned
+        match result.get(5, 0) {
+            Some(CellSafety::Probability(_)) | Some(CellSafety::Safe) | Some(CellSafety::Mine) => {},
+            other => panic!("Expected determined state at ({}, {}), got {:?}", 0, 5, other),
+        }
+        match result.get(4, 5) {
+            Some(CellSafety::Probability(_)) | Some(CellSafety::Safe) | Some(CellSafety::Mine) => {},
+            other => panic!("Expected determined state at ({}, {}), got {:?}", 0, 5, other),
+        }
     }
 }

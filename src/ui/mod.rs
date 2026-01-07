@@ -575,14 +575,28 @@ impl MainWindow {
 
     pub fn subscriptions(&self) -> iced::Subscription<MainWindowMessage> {
         iced::event::listen_with(|event, _, _| match event {
-            iced::Event::Window(iced::window::Event::Opened { size, .. }) => Some(MainWindowMessage::Game(
-                game::GameMessage::ViewportChanged(iced::Rectangle {
-                    x: 0.0,
-                    y: 0.0,
-                    width: size.width,
-                    height: size.height,
-                }),
-            )),
+            iced::Event::Window(iced::window::Event::Opened { size, .. }) => {
+                trace!("Window opened with size: {:?}", size);
+                Some(MainWindowMessage::Game(game::GameMessage::ViewportChanged(
+                    iced::Rectangle {
+                        x: 0.0,
+                        y: 0.0,
+                        width: size.width,
+                        height: size.height,
+                    },
+                )))
+            },
+            iced::Event::Window(iced::window::Event::Resized(size)) => {
+                trace!("Window resized to size: {:?}", size);
+                Some(MainWindowMessage::Game(game::GameMessage::ViewportChanged(
+                    iced::Rectangle {
+                        x: 0.0,
+                        y: 0.0,
+                        width: size.width,
+                        height: size.height,
+                    },
+                )))
+            },
             _ => None,
         })
     }

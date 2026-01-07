@@ -4,7 +4,7 @@ use crate::{
 };
 use iced::widget::canvas;
 use log::{error, trace};
-use std::{cell, sync::Arc};
+use std::sync::Arc;
 
 #[derive(Debug, Clone)]
 pub enum AnalysisOverlayMessage {
