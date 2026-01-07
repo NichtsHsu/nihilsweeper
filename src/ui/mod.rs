@@ -167,6 +167,9 @@ impl MainWindow {
                             });
                         if let Some(game) = &mut self.game {
                             game.update(game::GameMessage::ViewportChanged(self.viewport));
+                            if let Some(task) = self.update_analysis() {
+                                return task;
+                            }
                         }
                         return Task::none();
                     }
