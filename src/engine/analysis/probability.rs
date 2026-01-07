@@ -406,44 +406,65 @@ impl AnalysisEngine for ProbabilityCalculator {
     fn calculate(&self, mut board: BoardSafety) -> super::error::Result<BoardSafety> {
         let (mut witnesses, mut boxes) = self.build_witnesses_and_boxes(&board);
 
-        // Special case: no witnesses or boxes means all cells are wilderness (game not started)
-        // All cells have uniform probability
-        if witnesses.is_empty() || boxes.is_empty() {
-            trace!("ProbabilityCalculator: No witnesses or boxes found - calculating uniform probability");
+        // Special case: no witnesses means all numbered cells are satisfied
+        // Calculate uniform probability for frontier and wilderness cells
+        if witnesses.is_empty() {
+            trace!("ProbabilityCalculator: No witnesses found - calculating uniform probability");
 
-            // Count all wilderness cells
+            // Count frontier and wilderness cells
             let mut total_cells = 0;
             let mut mines_left = board.mines();
             for y in 0..board.height() {
                 for x in 0..board.width() {
                     match board.get(x, y) {
                         Some(CellSafety::Mine) => mines_left = mines_left.saturating_sub(1),
-                        Some(CellSafety::Wilderness) => total_cells += 1,
+                        Some(CellSafety::Frontier) | Some(CellSafety::Wilderness) => total_cells += 1,
                         _ => {},
                     }
                 }
             }
 
-            // Calculate uniform probability for all wilderness cells
+            // Calculate uniform probability for frontier and wilderness cells
             if total_cells > 0 {
                 let uniform_probability = mines_left as f32 / total_cells as f32;
 
                 for y in 0..board.height() {
                     for x in 0..board.width() {
-                        if matches!(board.get(x, y), Some(CellSafety::Wilderness)) {
-                            board.set(
-                                x,
-                                y,
-                                CellSafety::Probability(CellProbability {
-                                    mine_probability: uniform_probability,
-                                    ..Default::default()
-                                }),
-                            );
+                        match board.get(x, y) {
+                            Some(CellSafety::Frontier) => {
+                                board.set(
+                                    x,
+                                    y,
+                                    CellSafety::Probability(CellProbability {
+                                        frontier: true,
+                                        mine_probability: uniform_probability,
+                                        ..Default::default()
+                                    }),
+                                );
+                            },
+                            Some(CellSafety::Wilderness) => {
+                                board.set(
+                                    x,
+                                    y,
+                                    CellSafety::Probability(CellProbability {
+                                        frontier: false,
+                                        mine_probability: uniform_probability,
+                                        ..Default::default()
+                                    }),
+                                );
+                            },
+                            _ => {},
                         }
                     }
                 }
             }
 
+            return Ok(board);
+        }
+
+        // If no boxes but there are witnesses, something is wrong
+        if boxes.is_empty() {
+            trace!("ProbabilityCalculator: Witnesses found but no boxes - this shouldn't happen");
             return Ok(board);
         }
 
@@ -454,7 +475,18 @@ impl AnalysisEngine for ProbabilityCalculator {
         );
 
         let box_count = boxes.len();
-        let mines_left = board.mines();
+        
+        // Count remaining mines (total mines minus already identified mines)
+        let mut known_mines = 0;
+        for y in 0..board.height() {
+            for x in 0..board.width() {
+                if matches!(board.get(x, y), Some(CellSafety::Mine)) {
+                    known_mines += 1;
+                }
+            }
+        }
+        let mines_left = board.mines().saturating_sub(known_mines);
+        
         let mut total_frontier_cells = 0;
         for box_data in &boxes {
             total_frontier_cells += box_data.cells.len();
@@ -909,11 +941,11 @@ mod tests {
         // Check cells have probabilities assigned
         match result.get(5, 0) {
             Some(CellSafety::Probability(_)) | Some(CellSafety::Safe) | Some(CellSafety::Mine) => {},
-            other => panic!("Expected determined state at ({}, {}), got {:?}", 0, 5, other),
+            other => panic!("Expected determined state at ({}, {}), got {:?}", 5, 0, other),
         }
         match result.get(4, 5) {
             Some(CellSafety::Probability(_)) | Some(CellSafety::Safe) | Some(CellSafety::Mine) => {},
-            other => panic!("Expected determined state at ({}, {}), got {:?}", 0, 5, other),
+            other => panic!("Expected determined state at ({}, {}), got {:?}", 4, 5, other),
         }
     }
 }
