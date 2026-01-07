@@ -23,6 +23,7 @@ pub fn default_engine() -> impl AnalysisEngine {
 
 #[derive(Debug, Clone, Copy)]
 pub struct CellProbability {
+    pub frontier: bool,
     pub mine_probability: f32,
     pub second_safety: f32,
     pub progress_rate: f32,
@@ -32,6 +33,7 @@ pub struct CellProbability {
 impl Default for CellProbability {
     fn default() -> Self {
         CellProbability {
+            frontier: false,
             mine_probability: f32::NAN,
             second_safety: f32::NAN,
             progress_rate: f32::NAN,

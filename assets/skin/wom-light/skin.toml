@@ -1,5 +1,6 @@
 name = "WoM Light"
 
+light = true
 background_color = 0xc0c0c0
 highlight_color = 0xffffff
 shadow_color = 0x808080

@@ -104,6 +104,7 @@ impl MainWindow {
             iced::Rectangle::default(),
             config.cell_size,
             config.show_probabilities,
+            skin.as_ref().is_some_and(|s| s.light),
         );
         (
             Self {
@@ -166,6 +167,9 @@ impl MainWindow {
                             });
                         if let Some(game) = &mut self.game {
                             game.update(game::GameMessage::ViewportChanged(self.viewport));
+                            if let Some(task) = self.update_analysis() {
+                                return task;
+                            }
                         }
                         return Task::none();
                     }
@@ -574,14 +578,28 @@ impl MainWindow {
 
     pub fn subscriptions(&self) -> iced::Subscription<MainWindowMessage> {
         iced::event::listen_with(|event, _, _| match event {
-            iced::Event::Window(iced::window::Event::Opened { size, .. }) => Some(MainWindowMessage::Game(
-                game::GameMessage::ViewportChanged(iced::Rectangle {
-                    x: 0.0,
-                    y: 0.0,
-                    width: size.width,
-                    height: size.height,
-                }),
-            )),
+            iced::Event::Window(iced::window::Event::Opened { size, .. }) => {
+                trace!("Window opened with size: {:?}", size);
+                Some(MainWindowMessage::Game(game::GameMessage::ViewportChanged(
+                    iced::Rectangle {
+                        x: 0.0,
+                        y: 0.0,
+                        width: size.width,
+                        height: size.height,
+                    },
+                )))
+            },
+            iced::Event::Window(iced::window::Event::Resized(size)) => {
+                trace!("Window resized to size: {:?}", size);
+                Some(MainWindowMessage::Game(game::GameMessage::ViewportChanged(
+                    iced::Rectangle {
+                        x: 0.0,
+                        y: 0.0,
+                        width: size.width,
+                        height: size.height,
+                    },
+                )))
+            },
             _ => None,
         })
     }

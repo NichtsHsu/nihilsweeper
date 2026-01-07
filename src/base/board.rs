@@ -103,6 +103,26 @@ impl BoardState {
     }
 }
 
+pub fn build_cell_states_with_str(states_str: &str, width: usize, height: usize) -> Vec2D<CellState> {
+    let mut cell_states = Vec2D::new(width, height);
+    let mut pos = 0;
+    for ch in states_str.chars() {
+        let x = pos % width;
+        let y = pos / width;
+        if y >= height {
+            break;
+        }
+        cell_states[(x, y)] = match ch {
+            '?' => CellState::Closed,
+            'M' => CellState::Flagged,
+            '0'..='8' => CellState::Opening(ch.to_digit(10).unwrap() as u8),
+            _ => continue,
+        };
+        pos += 1;
+    }
+    cell_states
+}
+
 pub trait Board {
     /// Get the width of the board.
     fn width(&self) -> usize;

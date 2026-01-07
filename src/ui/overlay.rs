@@ -28,6 +28,7 @@ pub struct AnalysisOverlay {
     viewport: iced::Rectangle,
     cell_size: u32,
     cache: canvas::Cache,
+    light_skin: bool,
 }
 
 impl AnalysisOverlay {
@@ -39,6 +40,7 @@ impl AnalysisOverlay {
         viewport: iced::Rectangle,
         cell_size: u32,
         enabled: bool,
+        light_skin: bool,
     ) -> Self {
         AnalysisOverlay {
             enabled,
@@ -50,6 +52,7 @@ impl AnalysisOverlay {
             viewport,
             cell_size,
             cache: canvas::Cache::new(),
+            light_skin,
         }
     }
 
@@ -58,6 +61,11 @@ impl AnalysisOverlay {
             x as f32 * self.cell_size as f32 + self.board_area.x,
             y as f32 * self.cell_size as f32 + self.board_area.y,
         )
+    }
+
+    pub fn set_light_skin(&mut self, light_skin: bool) {
+        self.light_skin = light_skin;
+        self.cache.clear();
     }
 
     pub fn set_viewport(&mut self, viewport: iced::Rectangle) {
@@ -203,24 +211,85 @@ impl canvas::Program<super::MainWindowMessage> for AnalysisOverlay {
                         if let Some(analysis) = &self.analysis_result
                             && let Some(cell_safety) = analysis.get(x, y)
                         {
-                            let overlay_color = match cell_safety {
-                                crate::engine::analysis::CellSafety::Safe => iced::Color::from_rgba(0.0, 1.0, 0.0, 0.5),
-                                crate::engine::analysis::CellSafety::Mine => iced::Color::from_rgba(1.0, 0.0, 0.0, 0.5),
+                            match cell_safety {
+                                crate::engine::analysis::CellSafety::Safe => {
+                                    let overlay_color = iced::Color::from_rgba(0.0, 1.0, 0.0, 0.5);
+                                    frame.fill_rectangle(
+                                        self.cell_position(x, y),
+                                        iced::Size::new(self.cell_size as f32, self.cell_size as f32),
+                                        overlay_color,
+                                    );
+                                },
+                                crate::engine::analysis::CellSafety::Mine => {
+                                    let overlay_color = iced::Color::from_rgba(1.0, 0.0, 0.0, 0.5);
+                                    frame.fill_rectangle(
+                                        self.cell_position(x, y),
+                                        iced::Size::new(self.cell_size as f32, self.cell_size as f32),
+                                        overlay_color,
+                                    );
+                                },
                                 crate::engine::analysis::CellSafety::Probability(cell_probability) => {
-                                    iced::Color::from_rgba(
-                                        cell_probability.mine_probability / 100.0,
-                                        1.0 - cell_probability.mine_probability / 100.0,
-                                        0.0,
-                                        0.5,
-                                    )
+                                    // Calculate color based on mine probability (0.0-1.0 range)
+                                    let text_color = if cell_probability.frontier {
+                                        if self.light_skin {
+                                            iced::Color::from_rgb(
+                                                cell_probability.mine_probability * 0.65,
+                                                (1.0 - cell_probability.mine_probability) * 0.65,
+                                                0.0,
+                                            )
+                                        } else {
+                                            iced::Color::from_rgb(
+                                                cell_probability.mine_probability,
+                                                1.0 - cell_probability.mine_probability,
+                                                0.0,
+                                            )
+                                        }
+                                    } else {
+                                        iced::Color::from_rgb(0.5, 0.5, 0.5)
+                                    };
+
+                                    // Scale probability to 0.0-100.0 and format with up to 3 total digits
+                                    let probability_percent = cell_probability.mine_probability * 100.0;
+
+                                    // Format to show meaningful digits (rounded)
+                                    // Examples: 12.345 -> 12.3, 0.01234 -> 0.01, 45.98 -> 46.0
+                                    let probability_text = if probability_percent >= 10.0 {
+                                        // For values >= 10, show 1 decimal place (e.g., 12.3, 46.0)
+                                        format!("{:.1}", probability_percent)
+                                    } else {
+                                        // For values < 10, show 2 decimal places (e.g., 1.23, 0.01)
+                                        format!("{:.2}", probability_percent)
+                                    };
+
+                                    // Draw text centered in the cell
+                                    let cell_pos = self.cell_position(x, y);
+                                    let text_size = self.cell_size as f32 * 0.4; // Adjust text size relative to cell
+
+                                    // Center the text in the cell by adjusting position
+                                    // Text is drawn from baseline, so we offset it
+                                    let text_position = iced::Point::new(
+                                        cell_pos.x + self.cell_size as f32 * 0.5,
+                                        cell_pos.y + self.cell_size as f32 * 0.5,
+                                    );
+
+                                    frame.fill_text(canvas::Text {
+                                        content: probability_text,
+                                        position: text_position,
+                                        color: text_color,
+                                        size: text_size.into(),
+                                        font: iced::Font {
+                                            weight: iced::font::Weight::Bold,
+                                            ..Default::default()
+                                        },
+                                        max_width: self.cell_size as f32,
+                                        line_height: iced::widget::text::LineHeight::Relative(1.0),
+                                        align_x: iced::widget::text::Alignment::Center,
+                                        align_y: iced::alignment::Vertical::Center,
+                                        ..Default::default()
+                                    });
                                 },
                                 _ => break 'no_overlay,
-                            };
-                            frame.fill_rectangle(
-                                self.cell_position(x, y),
-                                iced::Size::new(self.cell_size as f32, self.cell_size as f32),
-                                overlay_color,
-                            );
+                            }
                         };
                     }
                 }
