@@ -400,6 +400,32 @@ impl ProbabilityCalculator {
 
         final_result
     }
+
+    fn set_probability(&self, board: &mut BoardSafety, x: usize, y: usize, probability: f32, frontier: bool) -> bool {
+        if probability == 0.0 {
+            board.set(x, y, CellSafety::Safe);
+            if board.suggestion().is_none() {
+                board.suggest(x, y);
+                if self.stop_on_first_safe {
+                    trace!("ProbabilityCalculator: Found safe cell at ({}, {}), stopping", x, y);
+                    return true;
+                }
+            }
+        } else if probability == 1.0 {
+            board.set(x, y, CellSafety::Mine);
+        } else {
+            board.set(
+                x,
+                y,
+                CellSafety::Probability(CellProbability {
+                    frontier,
+                    mine_probability: probability,
+                    ..Default::default()
+                }),
+            );
+        }
+        false
+    }
 }
 
 impl AnalysisEngine for ProbabilityCalculator {
@@ -432,26 +458,14 @@ impl AnalysisEngine for ProbabilityCalculator {
                     for x in 0..board.width() {
                         match board.get(x, y) {
                             Some(CellSafety::Frontier) => {
-                                board.set(
-                                    x,
-                                    y,
-                                    CellSafety::Probability(CellProbability {
-                                        frontier: true,
-                                        mine_probability: uniform_probability,
-                                        ..Default::default()
-                                    }),
-                                );
+                                if self.set_probability(&mut board, x, y, uniform_probability, true) {
+                                    return Ok(board);
+                                }
                             },
                             Some(CellSafety::Wilderness) => {
-                                board.set(
-                                    x,
-                                    y,
-                                    CellSafety::Probability(CellProbability {
-                                        frontier: false,
-                                        mine_probability: uniform_probability,
-                                        ..Default::default()
-                                    }),
-                                );
+                                if self.set_probability(&mut board, x, y, uniform_probability, false) {
+                                    return Ok(board);
+                                }
                             },
                             _ => {},
                         }
@@ -475,7 +489,7 @@ impl AnalysisEngine for ProbabilityCalculator {
         );
 
         let box_count = boxes.len();
-        
+
         // Count remaining mines (total mines minus already identified mines)
         let mut known_mines = 0;
         for y in 0..board.height() {
@@ -486,7 +500,7 @@ impl AnalysisEngine for ProbabilityCalculator {
             }
         }
         let mines_left = board.mines().saturating_sub(known_mines);
-        
+
         let mut total_frontier_cells = 0;
         for box_data in &boxes {
             total_frontier_cells += box_data.cells.len();
@@ -585,28 +599,7 @@ impl AnalysisEngine for ProbabilityCalculator {
                 let probability = (tally / total_tally) as f32;
 
                 for &(x, y) in &box_data.cells {
-                    if probability == 0.0 {
-                        board.set(x, y, CellSafety::Safe);
-                        if board.suggestion().is_none() {
-                            board.suggest(x, y);
-                            if self.stop_on_first_safe {
-                                trace!("ProbabilityCalculator: Found safe cell at ({}, {}), stopping", x, y);
-                                return Ok(board);
-                            }
-                        }
-                    } else if probability == 1.0 {
-                        board.set(x, y, CellSafety::Mine);
-                    } else {
-                        board.set(
-                            x,
-                            y,
-                            CellSafety::Probability(CellProbability {
-                                frontier: true,
-                                mine_probability: probability,
-                                ..Default::default()
-                            }),
-                        );
-                    }
+                    self.set_probability(&mut board, x, y, probability, true);
                 }
             }
         }
@@ -619,15 +612,7 @@ impl AnalysisEngine for ProbabilityCalculator {
             for y in 0..board.height() {
                 for x in 0..board.width() {
                     if matches!(board.get(x, y), Some(CellSafety::Wilderness)) {
-                        board.set(
-                            x,
-                            y,
-                            CellSafety::Probability(CellProbability {
-                                frontier: false,
-                                mine_probability: off_edge_prob,
-                                ..Default::default()
-                            }),
-                        );
+                        self.set_probability(&mut board, x, y, off_edge_prob, false);
                     }
                 }
             }
