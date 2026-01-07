@@ -82,7 +82,7 @@ impl ProbabilityCalculator {
         // First pass: identify all witnesses (unresolved numbered cells)
         for y in 0..board.height() {
             for x in 0..board.width() {
-                if let Some(&CellSafety::Unresolved(n)) = board.get(x, y) {
+                if let CellSafety::Unresolved(n) = board[(x, y)] {
                     // Find adjacent frontier cells
                     let mut adjacent_frontier = HashSet::new();
                     for nx in x.saturating_sub(1)..=(x + 1).min(board.width() - 1) {
@@ -90,7 +90,7 @@ impl ProbabilityCalculator {
                             if nx == x && ny == y {
                                 continue;
                             }
-                            if let Some(CellSafety::Frontier | CellSafety::Wilderness) = board.get(nx, ny) {
+                            if matches!(board[(nx, ny)], CellSafety::Frontier | CellSafety::Wilderness) {
                                 adjacent_frontier.insert((nx, ny));
                             }
                         }
@@ -103,7 +103,7 @@ impl ProbabilityCalculator {
                             if nx == x && ny == y {
                                 continue;
                             }
-                            if matches!(board.get(nx, ny), Some(CellSafety::Mine)) {
+                            if matches!(board[(nx, ny)], CellSafety::Mine) {
                                 flagged += 1;
                             }
                         }
@@ -127,7 +127,7 @@ impl ProbabilityCalculator {
         let mut frontier_to_box: HashMap<(usize, usize), usize> = HashMap::new();
         for y in 0..board.height() {
             for x in 0..board.width() {
-                if matches!(board.get(x, y), Some(CellSafety::Frontier)) {
+                if matches!(board[(x, y)], CellSafety::Frontier) {
                     let uid = boxes.len();
                     boxes.push(Box {
                         uid,
@@ -403,7 +403,7 @@ impl ProbabilityCalculator {
 
     fn set_probability(&self, board: &mut BoardSafety, x: usize, y: usize, probability: f32, frontier: bool) -> bool {
         if probability == 0.0 {
-            board.set(x, y, CellSafety::Safe);
+            board[(x, y)] = CellSafety::Safe;
             if board.suggestion().is_none() {
                 board.suggest(x, y);
                 if self.stop_on_first_safe {
@@ -412,17 +412,13 @@ impl ProbabilityCalculator {
                 }
             }
         } else if probability == 1.0 {
-            board.set(x, y, CellSafety::Mine);
+            board[(x, y)] = CellSafety::Mine;
         } else {
-            board.set(
-                x,
-                y,
-                CellSafety::Probability(CellProbability {
-                    frontier,
-                    mine_probability: probability,
-                    ..Default::default()
-                }),
-            );
+            board[(x, y)] = CellSafety::Probability(CellProbability {
+                frontier,
+                mine_probability: probability,
+                ..Default::default()
+            });
         }
         false
     }
@@ -442,9 +438,9 @@ impl AnalysisEngine for ProbabilityCalculator {
             let mut mines_left = board.mines();
             for y in 0..board.height() {
                 for x in 0..board.width() {
-                    match board.get(x, y) {
-                        Some(CellSafety::Mine) => mines_left = mines_left.saturating_sub(1),
-                        Some(CellSafety::Frontier) | Some(CellSafety::Wilderness) => total_cells += 1,
+                    match board[(x, y)] {
+                        CellSafety::Mine => mines_left = mines_left.saturating_sub(1),
+                        CellSafety::Frontier | CellSafety::Wilderness => total_cells += 1,
                         _ => {},
                     }
                 }
@@ -456,13 +452,13 @@ impl AnalysisEngine for ProbabilityCalculator {
 
                 for y in 0..board.height() {
                     for x in 0..board.width() {
-                        match board.get(x, y) {
-                            Some(CellSafety::Frontier) => {
+                        match board[(x, y)] {
+                            CellSafety::Frontier => {
                                 if self.set_probability(&mut board, x, y, uniform_probability, true) {
                                     return Ok(board);
                                 }
                             },
-                            Some(CellSafety::Wilderness) => {
+                            CellSafety::Wilderness => {
                                 if self.set_probability(&mut board, x, y, uniform_probability, false) {
                                     return Ok(board);
                                 }
@@ -494,7 +490,7 @@ impl AnalysisEngine for ProbabilityCalculator {
         let mut known_mines = 0;
         for y in 0..board.height() {
             for x in 0..board.width() {
-                if matches!(board.get(x, y), Some(CellSafety::Mine)) {
+                if matches!(board[(x, y)], CellSafety::Mine) {
                     known_mines += 1;
                 }
             }
@@ -510,7 +506,7 @@ impl AnalysisEngine for ProbabilityCalculator {
         let mut wilderness_count = 0;
         for y in 0..board.height() {
             for x in 0..board.width() {
-                if matches!(board.get(x, y), Some(CellSafety::Wilderness)) {
+                if matches!(board[(x, y)], CellSafety::Wilderness) {
                     wilderness_count += 1;
                 }
             }
@@ -611,7 +607,7 @@ impl AnalysisEngine for ProbabilityCalculator {
 
             for y in 0..board.height() {
                 for x in 0..board.width() {
-                    if matches!(board.get(x, y), Some(CellSafety::Wilderness)) {
+                    if matches!(board[(x, y)], CellSafety::Wilderness) {
                         self.set_probability(&mut board, x, y, off_edge_prob, false);
                     }
                 }

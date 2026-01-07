@@ -2237,7 +2237,6 @@ dependencies = [
  "env_logger",
  "iced",
  "image",
- "itertools",
  "log",
  "rand",
  "resvg",

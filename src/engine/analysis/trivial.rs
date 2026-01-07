@@ -23,9 +23,9 @@ impl TrivialAnalysis {
                     if nx == x && ny == y {
                         continue;
                     }
-                    match board.get(nx, ny) {
-                        Some(CellSafety::Mine) => flagged_neighbors += 1,
-                        Some(CellSafety::Wilderness | CellSafety::Frontier | CellSafety::Probability { .. }) => {
+                    match board[(nx, ny)] {
+                        CellSafety::Mine => flagged_neighbors += 1,
+                        CellSafety::Wilderness | CellSafety::Frontier | CellSafety::Probability(..) => {
                             unopened_neighbors += 1
                         },
                         _ => {},
@@ -34,17 +34,17 @@ impl TrivialAnalysis {
             }
             if flagged_neighbors == n && unopened_neighbors > 0 {
                 // All adjacent unresolved cells are safe
-                board.set(x, y, CellSafety::Resolved(n));
+                board[(x, y)] = CellSafety::Resolved(n);
                 for nx in x.saturating_sub(1)..=(x + 1).min(board.width() - 1) {
                     for ny in y.saturating_sub(1)..=(y + 1).min(board.height() - 1) {
                         if nx == x && ny == y {
                             continue;
                         }
                         if matches!(
-                            board.get(nx, ny),
-                            Some(CellSafety::Wilderness | CellSafety::Frontier | CellSafety::Probability { .. })
+                            board[(nx, ny)],
+                            CellSafety::Wilderness | CellSafety::Frontier | CellSafety::Probability(..)
                         ) {
-                            board.set(nx, ny, CellSafety::Safe);
+                            board[(nx, ny)] = CellSafety::Safe;
                             if board.suggestion().is_none() {
                                 board.suggest(nx, ny);
                                 if self.stop_on_first_safe {
@@ -59,17 +59,17 @@ impl TrivialAnalysis {
                 }
             } else if flagged_neighbors + unopened_neighbors == n && unopened_neighbors > 0 {
                 // All adjacent unresolved cells are mines
-                board.set(x, y, CellSafety::Resolved(n));
+                board[(x, y)] = CellSafety::Resolved(n);
                 for nx in x.saturating_sub(1)..=(x + 1).min(board.width() - 1) {
                     for ny in y.saturating_sub(1)..=(y + 1).min(board.height() - 1) {
                         if nx == x && ny == y {
                             continue;
                         }
                         if matches!(
-                            board.get(nx, ny),
-                            Some(CellSafety::Wilderness | CellSafety::Frontier | CellSafety::Probability { .. })
+                            board[(nx, ny)],
+                            CellSafety::Wilderness | CellSafety::Frontier | CellSafety::Probability(..)
                         ) {
-                            board.set(nx, ny, CellSafety::Mine);
+                            board[(nx, ny)] = CellSafety::Mine;
 
                             if self.spread(board, nx, ny)? {
                                 return Ok(true);

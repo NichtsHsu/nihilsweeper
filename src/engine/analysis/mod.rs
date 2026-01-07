@@ -1,7 +1,7 @@
 use core::f32;
+use std::ops::{Deref, DerefMut};
 
 use crate::base::{Vec2D, board};
-use itertools::iproduct;
 
 pub mod brute_force;
 pub mod error;
@@ -64,9 +64,7 @@ pub enum CellSafety {
 
 #[derive(Debug, Clone)]
 pub struct BoardSafety {
-    cells: Vec<CellSafety>,
-    width: usize,
-    height: usize,
+    cells: Vec2D<CellSafety>,
     mines: usize,
     suggestion: Option<(usize, usize)>,
 }
@@ -87,57 +85,35 @@ impl BoardSafety {
             CellSafety::Wilderness
         };
 
-        let cells = iproduct![0..cell_states.dims().1, 0..cell_states.dims().0]
-            .map(|(y, x)| match cell_states[(x, y)] {
-                board::CellState::Opening(0) => CellSafety::Resolved(0),
-                board::CellState::Opening(number) => CellSafety::Unresolved(number),
-                board::CellState::Flagged if admit_flags => CellSafety::Mine,
-                _ => check_frontier(x, y),
-            })
-            .collect();
+        let mut cells = Vec2D::new(cell_states.dims().0, cell_states.dims().1);
+        for y in 0..cell_states.dims().1 {
+            for x in 0..cell_states.dims().0 {
+                cells[(x, y)] = match cell_states[(x, y)] {
+                    board::CellState::Opening(0) => CellSafety::Resolved(0),
+                    board::CellState::Opening(number) => CellSafety::Unresolved(number),
+                    board::CellState::Flagged if admit_flags => CellSafety::Mine,
+                    _ => check_frontier(x, y),
+                };
+            }
+        }
 
         BoardSafety {
             cells,
-            width: cell_states.dims().0,
-            height: cell_states.dims().1,
             mines,
             suggestion: None,
         }
     }
 
     pub fn width(&self) -> usize {
-        self.width
+        self.cells.dims().0
     }
 
     pub fn height(&self) -> usize {
-        self.height
+        self.cells.dims().1
     }
 
     pub fn mines(&self) -> usize {
         self.mines
-    }
-
-    pub fn get(&self, x: usize, y: usize) -> Option<&CellSafety> {
-        if x >= self.width || y >= self.height {
-            return None;
-        }
-        self.cells.get(y * self.width + x)
-    }
-
-    pub fn get_mut(&mut self, x: usize, y: usize) -> Option<&mut CellSafety> {
-        if x >= self.width || y >= self.height {
-            return None;
-        }
-        self.cells.get_mut(y * self.width + x)
-    }
-
-    pub fn set(&mut self, x: usize, y: usize, value: CellSafety) {
-        if x >= self.width || y >= self.height {
-            return;
-        }
-        if let Some(cell) = self.cells.get_mut(y * self.width + x) {
-            *cell = value;
-        }
     }
 
     pub fn suggestion(&self) -> Option<(usize, usize)> {
@@ -151,7 +127,7 @@ impl BoardSafety {
     pub fn conditions_more_than(&self, count: f64) -> bool {
         let mut unconfirmed: usize = 0;
         let mut remaining_mines = self.mines;
-        for cell in &self.cells {
+        for cell in self.cells.data() {
             match cell {
                 CellSafety::Wilderness | CellSafety::Frontier | CellSafety::Probability(..) => unconfirmed += 1,
                 CellSafety::Mine => remaining_mines -= 1,
@@ -171,6 +147,20 @@ impl BoardSafety {
             }
         }
         false
+    }
+}
+
+impl Deref for BoardSafety {
+    type Target = Vec2D<CellSafety>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.cells
+    }
+}
+
+impl DerefMut for BoardSafety {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.cells
     }
 }
 

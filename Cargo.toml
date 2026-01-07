@@ -7,7 +7,6 @@ edition = "2024"
 env_logger = "0.11"
 iced = { version = "0.14", features = ["canvas", "image", "tokio"] }
 image = "0.25"
-itertools = "0.14"
 log = { version = "0.4", features = ["std", "serde", "release_max_level_info"] }
 rand = "0.9"
 resvg = "0.45"
