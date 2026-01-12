@@ -10,14 +10,14 @@ pub mod half_chance;
 pub mod probability;
 pub mod trivial;
 
-pub fn default_engine() -> impl AnalysisEngine {
-    trivial::TrivialAnalysis::new(false)
+pub fn default_engine() -> impl Solver {
+    trivial::TrivialSolver::new(false)
         .then(probability::ProbabilityCalculator::new(false))
         .then(half_chance::HalfChanceCheck)
         .or(select(
             |board| board.conditions_more_than(1000.0),
             guessing::GuessingLogic,
-            brute_force::BruteForceAnalysis,
+            brute_force::BruteForceSolver,
         ))
 }
 
@@ -45,20 +45,20 @@ impl Default for CellProbability {
 #[derive(Debug, Clone, Copy, Default)]
 pub enum CellSafety {
     #[default]
-    // An unresolved closed cell that is not adjacent to any revealed numbers.
+    /// An unresolved closed cell that is not adjacent to any revealed numbers.
     Wilderness,
-    // An unresolved closed cell that is adjacent to revealed number(s).
+    /// An unresolved closed cell that is adjacent to revealed number(s).
     Frontier,
-    // A number cell that has adjacent unresolved cells.
+    /// A number cell that has adjacent unresolved cells.
     Unresolved(u8),
-    // A number cell that has had all its adjacent mines or safe cells identified.
-    // An empty cell always be `Resolved(0)`.
+    /// A number cell that has had all its adjacent mines or safe cells identified.
+    /// An empty cell always be `Resolved(0)`.
     Resolved(u8),
-    // A closed cell that has been determined to be safe.
+    /// A closed cell that has been determined to be safe.
     Safe,
-    // A closed cell that has been determined to be a mine.
+    /// A closed cell that has been determined to be a mine.
     Mine,
-    // A closed cell with an associated probability of being a mine.
+    /// A closed cell with an associated probability of being a mine.
     Probability(CellProbability),
 }
 
@@ -164,23 +164,23 @@ impl DerefMut for BoardSafety {
     }
 }
 
-pub trait AnalysisEngine: Send + Sync {
+pub trait Solver: Send + Sync {
     fn calculate(&self, board: BoardSafety) -> error::Result<BoardSafety>;
 }
 
 #[derive(Debug, Clone)]
-struct AnalysisEngineCombinerAnd<T: AnalysisEngine, U: AnalysisEngine>(T, U);
+struct SolverCombinerAnd<T: Solver, U: Solver>(T, U);
 
-impl<T: AnalysisEngine, U: AnalysisEngine> AnalysisEngine for AnalysisEngineCombinerAnd<T, U> {
+impl<T: Solver, U: Solver> Solver for SolverCombinerAnd<T, U> {
     fn calculate(&self, board: BoardSafety) -> error::Result<BoardSafety> {
         self.1.calculate(self.0.calculate(board)?)
     }
 }
 
 #[derive(Debug, Clone)]
-struct AnalysisEngineCombinerOr<T: AnalysisEngine, U: AnalysisEngine>(T, U);
+struct SolverCombinerOr<T: Solver, U: Solver>(T, U);
 
-impl<T: AnalysisEngine, U: AnalysisEngine> AnalysisEngine for AnalysisEngineCombinerOr<T, U> {
+impl<T: Solver, U: Solver> Solver for SolverCombinerOr<T, U> {
     fn calculate(&self, board: BoardSafety) -> error::Result<BoardSafety> {
         let board = self.0.calculate(board)?;
         if let Some((..)) = board.suggestion() {
@@ -192,22 +192,22 @@ impl<T: AnalysisEngine, U: AnalysisEngine> AnalysisEngine for AnalysisEngineComb
 }
 
 #[derive(Debug, Clone)]
-struct AnalysisEngineCombinerSelect<F, T, U>
+struct SolverCombinerSelect<F, T, U>
 where
     F: Fn(&BoardSafety) -> bool + Send + Sync + 'static,
-    T: AnalysisEngine + 'static,
-    U: AnalysisEngine + 'static,
+    T: Solver + 'static,
+    U: Solver + 'static,
 {
     condition: F,
     yes: T,
     no: U,
 }
 
-impl<F, T, U> AnalysisEngine for AnalysisEngineCombinerSelect<F, T, U>
+impl<F, T, U> Solver for SolverCombinerSelect<F, T, U>
 where
     F: Fn(&BoardSafety) -> bool + Send + Sync + 'static,
-    T: AnalysisEngine + 'static,
-    U: AnalysisEngine + 'static,
+    T: Solver + 'static,
+    U: Solver + 'static,
 {
     fn calculate(&self, board: BoardSafety) -> error::Result<BoardSafety> {
         if (self.condition)(&board) {
@@ -218,35 +218,35 @@ where
     }
 }
 
-pub trait AnalysisEngineExt {
-    /// Combines two analysis engines in sequence, passing the output of the first as input to the
+pub trait SolverExt {
+    /// Combines two solver engines in sequence, passing the output of the first as input to the
     /// second. Suggestions made by the first engine may be either ignored or accepted by the
     /// second.
-    fn then<T: AnalysisEngine>(self, next: T) -> impl AnalysisEngine
+    fn then<T: Solver>(self, next: T) -> impl Solver
     where
-        Self: Sized + AnalysisEngine,
+        Self: Sized + Solver,
     {
-        AnalysisEngineCombinerAnd(self, next)
+        SolverCombinerAnd(self, next)
     }
 
-    /// Combines two analysis engines such that the second is only invoked if the first does not
+    /// Combines two solver engines such that the second is only invoked if the first does not
     /// produce a suggestion.
-    fn or<T: AnalysisEngine>(self, alternative: T) -> impl AnalysisEngine
+    fn or<T: Solver>(self, alternative: T) -> impl Solver
     where
-        Self: Sized + AnalysisEngine,
+        Self: Sized + Solver,
     {
-        AnalysisEngineCombinerOr(self, alternative)
+        SolverCombinerOr(self, alternative)
     }
 }
 
-/// Selects between two analysis engines based on a condition evaluated on the input board.
-pub fn select<F, T, U>(condition: F, yes: T, no: U) -> impl AnalysisEngine
+/// Selects between two solver engines based on a condition evaluated on the input board.
+pub fn select<F, T, U>(condition: F, yes: T, no: U) -> impl Solver
 where
     F: Fn(&BoardSafety) -> bool + Send + Sync + 'static,
-    T: AnalysisEngine + 'static,
-    U: AnalysisEngine + 'static,
+    T: Solver + 'static,
+    U: Solver + 'static,
 {
-    AnalysisEngineCombinerSelect { condition, yes, no }
+    SolverCombinerSelect { condition, yes, no }
 }
 
-impl<T: AnalysisEngine> AnalysisEngineExt for T {}
+impl<T: Solver> SolverExt for T {}

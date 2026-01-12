@@ -1,4 +1,4 @@
-use super::{AnalysisEngine, BoardSafety, CellProbability, CellSafety};
+use super::{BoardSafety, CellProbability, CellSafety, Solver};
 use log::trace;
 use std::collections::{HashMap, HashSet};
 
@@ -424,7 +424,7 @@ impl ProbabilityCalculator {
     }
 }
 
-impl AnalysisEngine for ProbabilityCalculator {
+impl Solver for ProbabilityCalculator {
     fn calculate(&self, mut board: BoardSafety) -> super::error::Result<BoardSafety> {
         let (mut witnesses, mut boxes) = self.build_witnesses_and_boxes(&board);
 
@@ -623,7 +623,7 @@ mod tests {
     use super::*;
     use crate::{
         base::{Vec2D, board},
-        engine::analysis::trivial,
+        engine::solver::trivial,
     };
 
     #[test]
@@ -681,7 +681,7 @@ mod tests {
     #[test]
     fn test_certain_safe() {
         // Create a board where we can deduce a safe cell through probability
-        // This is a case that TrivialAnalysis should normally handle,
+        // This is a case that TrivialSolver should normally handle,
         // but we test it directly here
         // Layout:
         // 1 1
@@ -693,8 +693,8 @@ mod tests {
 
         let board_safety = BoardSafety::new(&cell_states, 1, true);
 
-        // First run trivial analysis to resolve the obvious case
-        let trivial = super::super::trivial::TrivialAnalysis::new(false);
+        // First run trivial solver to resolve the obvious case
+        let trivial = super::super::trivial::TrivialSolver::new(false);
         let result = trivial.calculate(board_safety).unwrap();
 
         // The bottom-left cell (0, 1) should be safe (both 1's satisfied by the flag)
@@ -778,7 +778,7 @@ mod tests {
         let board_safety = BoardSafety::new(&cell_states, 1, true);
 
         // First run trivial to resolve the obvious
-        let trivial = super::super::trivial::TrivialAnalysis::new(false);
+        let trivial = super::super::trivial::TrivialSolver::new(false);
         let intermediate = trivial.calculate(board_safety).unwrap();
 
         let calculator = ProbabilityCalculator::new(false);
@@ -912,7 +912,7 @@ mod tests {
         );
 
         let board_safety = BoardSafety::new(&cell_states, 10, false);
-        let trivial = super::super::trivial::TrivialAnalysis::new(false);
+        let trivial = super::super::trivial::TrivialSolver::new(false);
         let calculator = ProbabilityCalculator::new(false);
         let result = trivial
             .calculate(board_safety)

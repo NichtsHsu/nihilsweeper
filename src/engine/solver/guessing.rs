@@ -1,9 +1,9 @@
-use super::{AnalysisEngine, BoardSafety, CellSafety};
+use super::{BoardSafety, CellSafety, Solver};
 
 #[derive(Debug, Clone, Default)]
-pub struct HalfChanceCheck;
+pub struct GuessingLogic;
 
-impl AnalysisEngine for HalfChanceCheck {
+impl Solver for GuessingLogic {
     fn calculate(&self, board: BoardSafety) -> super::error::Result<BoardSafety> {
         Ok(board)
     }

@@ -1,13 +1,13 @@
 use log::trace;
 
-use super::{AnalysisEngine, BoardSafety, CellSafety};
+use super::{BoardSafety, CellSafety, Solver};
 
 #[derive(Debug, Clone, Default)]
-pub struct TrivialAnalysis {
+pub struct TrivialSolver {
     stop_on_first_safe: bool,
 }
 
-impl TrivialAnalysis {
+impl TrivialSolver {
     pub fn new(stop_on_first_safe: bool) -> Self {
         Self { stop_on_first_safe }
     }
@@ -96,7 +96,7 @@ impl TrivialAnalysis {
         Ok(false)
     }
 
-    /// When a cell is marked as safe or a mine, spread the analysis to its neighbors.
+    /// When a cell is marked as safe or a mine, spread the solver to its neighbors.
     /// Returns `Ok(true)` if `stop_on_first_safe` is set and a safe cell is found.
     fn spread(&self, board: &mut BoardSafety, x: usize, y: usize) -> super::error::Result<bool> {
         for nx in x.saturating_sub(1)..=(x + 1).min(board.width() - 1) {
@@ -113,13 +113,13 @@ impl TrivialAnalysis {
     }
 }
 
-impl AnalysisEngine for TrivialAnalysis {
+impl Solver for TrivialSolver {
     fn calculate(&self, mut board: BoardSafety) -> super::error::Result<BoardSafety> {
         'stop: for x in 0..board.width() {
             for y in 0..board.height() {
                 if self.calculate_position(&mut board, x, y)? {
                     trace!(
-                        "TrivialAnalysis: stopping on first safe cell at {:?}",
+                        "TrivialSolver: stopping on first safe cell at {:?}",
                         board.suggestion().unwrap()
                     );
                     break 'stop;

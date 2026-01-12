@@ -8,7 +8,7 @@ pub enum Error {
     Image(image::ImageError),
     PixmapCreationFailed,
     Iced(iced::Error),
-    Analysis(crate::engine::analysis::error::Error),
+    Solver(crate::engine::solver::error::Error),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -37,9 +37,9 @@ impl From<image::ImageError> for Error {
     }
 }
 
-impl From<crate::engine::analysis::error::Error> for Error {
-    fn from(value: crate::engine::analysis::error::Error) -> Self {
-        Error::Analysis(value)
+impl From<crate::engine::solver::error::Error> for Error {
+    fn from(value: crate::engine::solver::error::Error) -> Self {
+        Error::Solver(value)
     }
 }
 
@@ -54,7 +54,7 @@ impl std::fmt::Display for Error {
             Self::Image(e) => write!(f, "image error: {e}"),
             Self::PixmapCreationFailed => write!(f, "failed to create pixmap"),
             Self::Iced(e) => write!(f, "iced error: {e}"),
-            Self::Analysis(e) => write!(f, "analysis error: {e}"),
+            Self::Solver(e) => write!(f, "solver error: {e}"),
         }
     }
 }
@@ -70,7 +70,7 @@ impl std::error::Error for Error {
             Self::Image(e) => e.source(),
             Self::PixmapCreationFailed => None,
             Self::Iced(e) => e.source(),
-            Self::Analysis(e) => e.source(),
+            Self::Solver(e) => e.source(),
         }
     }
 }

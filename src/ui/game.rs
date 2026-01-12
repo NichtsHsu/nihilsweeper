@@ -981,15 +981,15 @@ impl canvas::Program<GameMessage> for Game {
                     );
 
                     // 'no_overlay: {
-                    //     if let Some(analysis) = &self.analysis_result
-                    //         && let Some(cell_safety) = analysis.get(x, y)
+                    //     if let Some(solver) = &self.solver_result
+                    //         && let Some(cell_safety) = solver.get(x, y)
                     //     {
                     //         let overlay_color = match cell_safety {
-                    //             crate::engine::analysis::CellSafety::Safe =>
+                    //             crate::engine::solver::CellSafety::Safe =>
                     // iced::Color::from_rgba(0.0, 1.0, 0.0, 0.5),
-                    // crate::engine::analysis::CellSafety::Mine => iced::Color::from_rgba(1.0, 0.0,
+                    // crate::engine::solver::CellSafety::Mine => iced::Color::from_rgba(1.0, 0.0,
                     // 0.0, 0.5),
-                    // crate::engine::analysis::CellSafety::Probability(cell_probability) => {
+                    // crate::engine::solver::CellSafety::Probability(cell_probability) => {
                     //                 iced::Color::from_rgba(
                     //                     cell_probability.mine_probability / 100.0,
                     //                     1.0 - cell_probability.mine_probability / 100.0,
@@ -999,7 +999,7 @@ impl canvas::Program<GameMessage> for Game {
                     //             },
                     //             _ => break 'no_overlay,
                     //         };
-                    //         trace!("Drawing analysis overlay at ({}, {}) with color {:?}", x, y,
+                    //         trace!("Drawing solver overlay at ({}, {}) with color {:?}", x, y,
                     // overlay_color);         frame.fill_rectangle(
                     //             self.cell_position(x, y),
                     //             iced::Size::new(self.cell_size as f32, self.cell_size as f32),
