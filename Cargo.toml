@@ -9,7 +9,7 @@ iced = { version = "0.14", features = ["canvas", "image", "tokio"] }
 image = "0.25"
 log = { version = "0.4", features = ["std", "serde", "release_max_level_info"] }
 rand = "0.9"
-resvg = "0.45"
+resvg = "0.46"
 serde = { version = "1.0.228", features = ["derive"] }
 smallvec = { version = "1.15.1", features = ["union"] }
 tiny-skia = "0.11"
