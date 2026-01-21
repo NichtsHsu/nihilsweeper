@@ -1,6 +1,11 @@
 use super::{BoardSafety, CellProbability, CellSafety, Solver};
 use log::trace;
+use smallvec::smallvec;
 use std::collections::{HashMap, HashSet};
+
+// A witness can witness up to 8 boxes, and a box can be witnessed by up to 8 witnesses,
+// so we can use SmallVec for better performance.
+type SmallVec<T> = smallvec::SmallVec<[T; 8]>;
 
 // Maximum safe values for binomial coefficient calculation before f64 overflow
 // C(170, 85) is near the maximum representable value in f64 (~10^308)
@@ -15,10 +20,11 @@ pub struct ProbabilityCalculator {
 /// Represents a numbered cell (witness) that constrains adjacent frontier cells
 #[derive(Debug, Clone)]
 struct Witness {
+    uid: usize,
     x: usize,
     y: usize,
     mines: u8,
-    boxes: Vec<usize>, // indices into the boxes array
+    boxes: SmallVec<usize>, // indices into the boxes array
     processed: bool,
 }
 
@@ -26,8 +32,8 @@ struct Witness {
 #[derive(Debug, Clone)]
 struct Box {
     uid: usize,
-    cells: Vec<(usize, usize)>,
-    witnesses: Vec<usize>, // indices into the witnesses array
+    cells: SmallVec<(usize, usize)>,
+    witnesses: SmallVec<usize>, // indices into the witnesses array
     processed: bool,
 }
 
@@ -76,26 +82,13 @@ impl ProbabilityCalculator {
     /// Build witnesses and boxes from the board
     fn build_witnesses_and_boxes(&self, board: &BoardSafety) -> (Vec<Witness>, Vec<Box>) {
         let mut witnesses = Vec::new();
-        let mut boxes_map: HashMap<HashSet<(usize, usize)>, usize> = HashMap::new();
-        let mut boxes = Vec::new();
+        let mut witnesses_map: HashMap<(usize, usize), usize> = HashMap::new();
+        let mut boxes: Vec<Box> = Vec::new();
 
         // First pass: identify all witnesses (unresolved numbered cells)
         for y in 0..board.height() {
             for x in 0..board.width() {
                 if let CellSafety::Unresolved(n) = board[(x, y)] {
-                    // Find adjacent frontier cells
-                    let mut adjacent_frontier = HashSet::new();
-                    for nx in x.saturating_sub(1)..=(x + 1).min(board.width() - 1) {
-                        for ny in y.saturating_sub(1)..=(y + 1).min(board.height() - 1) {
-                            if nx == x && ny == y {
-                                continue;
-                            }
-                            if matches!(board[(nx, ny)], CellSafety::Frontier | CellSafety::Wilderness) {
-                                adjacent_frontier.insert((nx, ny));
-                            }
-                        }
-                    }
-
                     // Count already flagged mines
                     let mut flagged = 0;
                     for nx in x.saturating_sub(1)..=(x + 1).min(board.width() - 1) {
@@ -109,52 +102,55 @@ impl ProbabilityCalculator {
                         }
                     }
 
-                    if !adjacent_frontier.is_empty() && n > flagged {
+                    if n > flagged {
+                        let uid = witnesses.len();
                         witnesses.push(Witness {
+                            uid,
                             x,
                             y,
                             mines: n - flagged,
-                            boxes: Vec::new(),
+                            boxes: SmallVec::new(),
                             processed: false,
                         });
+                        witnesses_map.insert((x, y), uid);
                     }
                 }
             }
         }
 
         // Second pass: create boxes for groups of frontier cells
-        // For simplicity, each individual frontier cell becomes its own box
-        let mut frontier_to_box: HashMap<(usize, usize), usize> = HashMap::new();
+        let mut witnesses_for_box: HashMap<SmallVec<usize>, usize> = HashMap::new();
         for y in 0..board.height() {
             for x in 0..board.width() {
                 if matches!(board[(x, y)], CellSafety::Frontier) {
+                    // Search witnesses to see if this cell should be included in an existed box
+                    let mut this_witnesses = SmallVec::new();
+                    for nx in x.saturating_sub(1)..=(x + 1).min(board.width() - 1) {
+                        for ny in y.saturating_sub(1)..=(y + 1).min(board.height() - 1) {
+                            if nx == x && ny == y {
+                                continue;
+                            }
+                            if let Some(uid) = witnesses_map.get(&(nx, ny)) {
+                                this_witnesses.push(*uid);
+                            }
+                        }
+                    }
+                    if let Some(&box_idx) = witnesses_for_box.get(&this_witnesses) {
+                        // Add to existing box
+                        boxes[box_idx].cells.push((x, y));
+                        continue;
+                    }
                     let uid = boxes.len();
                     boxes.push(Box {
                         uid,
-                        cells: vec![(x, y)],
-                        witnesses: Vec::new(),
+                        cells: smallvec![(x, y)],
+                        witnesses: this_witnesses.clone(),
                         processed: false,
                     });
-                    frontier_to_box.insert((x, y), uid);
-                }
-            }
-        }
-
-        // Third pass: link witnesses to boxes
-        for (wit_idx, witness) in witnesses.iter_mut().enumerate() {
-            let x = witness.x;
-            let y = witness.y;
-            for nx in x.saturating_sub(1)..=(x + 1).min(board.width() - 1) {
-                for ny in y.saturating_sub(1)..=(y + 1).min(board.height() - 1) {
-                    if nx == x && ny == y {
-                        continue;
+                    for wit in this_witnesses.iter().copied() {
+                        witnesses[wit].boxes.push(uid);
                     }
-                    if let Some(&box_idx) = frontier_to_box.get(&(nx, ny))
-                        && !witness.boxes.contains(&box_idx)
-                    {
-                        witness.boxes.push(box_idx);
-                        boxes[box_idx].witnesses.push(wit_idx);
-                    }
+                    witnesses_for_box.insert(this_witnesses, uid);
                 }
             }
         }
@@ -202,7 +198,7 @@ impl ProbabilityCalculator {
     /// Distribute missing mines among new boxes
     fn distribute_mines(
         &self,
-        pl: &ProbabilityLine,
+        mut pl: ProbabilityLine,
         boxes: &[Box],
         missing_mines: usize,
         new_boxes: &[usize],
@@ -224,38 +220,39 @@ impl ProbabilityCalculator {
                 return result;
             }
 
-            let mut new_pl = pl.clone();
             let combinations = Self::binomial(box_size, missing_mines);
-            new_pl.solution_count *= combinations;
-            new_pl.mine_count += missing_mines;
-            new_pl.mine_box_count[box_idx] += missing_mines as f64 * combinations;
-            new_pl.allocated_mines[box_idx] = missing_mines;
-            result.push(new_pl);
+            pl.solution_count *= combinations;
+            pl.mine_count += missing_mines;
+            pl.allocated_mines[box_idx] = missing_mines;
+            result.push(pl);
             return result;
         }
 
         // Recursively try different mine allocations
         let box_idx = new_boxes[index];
         let box_size = boxes[box_idx].cells.len();
+        let max_mines = missing_mines.min(box_size);
 
-        for mines_here in 0..=missing_mines.min(box_size) {
-            let mut new_pl = pl.clone();
+        let mut recursive_distribute = |mines_here, mut pl: ProbabilityLine| {
             let combinations = Self::binomial(box_size, mines_here);
-            new_pl.solution_count *= combinations;
-            new_pl.mine_count += mines_here;
-            new_pl.mine_box_count[box_idx] += mines_here as f64 * combinations;
-            new_pl.allocated_mines[box_idx] = mines_here;
+            pl.solution_count *= combinations;
+            pl.mine_count += mines_here;
+            pl.allocated_mines[box_idx] = mines_here;
 
             result.extend(self.distribute_mines(
-                &new_pl,
+                pl,
                 boxes,
                 missing_mines - mines_here,
                 new_boxes,
                 index + 1,
                 max_total_mines,
             ));
-        }
+        };
 
+        for mines_here in 0..max_mines {
+            recursive_distribute(mines_here, pl.clone());
+        }
+        recursive_distribute(max_mines, pl);
         result
     }
 
@@ -270,8 +267,8 @@ impl ProbabilityCalculator {
     ) -> Vec<ProbabilityLine> {
         // Extract witness data we need before modifying
         let witness_mines = witnesses[wit_idx].mines as usize;
-        let witness_boxes = witnesses[wit_idx].boxes.clone();
-        let new_boxes: Vec<usize> = witness_boxes
+        let new_boxes: SmallVec<usize> = witnesses[wit_idx]
+            .boxes
             .iter()
             .copied()
             .filter(|&b_idx| !boxes[b_idx].processed)
@@ -280,7 +277,7 @@ impl ProbabilityCalculator {
         let mut new_probs = Vec::new();
 
         for pl in working_probs {
-            let placed_mines = self.count_placed_mines(&pl, &witness_boxes, boxes);
+            let placed_mines = self.count_placed_mines(&pl, &witnesses[wit_idx].boxes, boxes);
             let missing_mines = witness_mines;
 
             if placed_mines > missing_mines {
@@ -294,7 +291,7 @@ impl ProbabilityCalculator {
                 continue;
             } else {
                 let to_place = missing_mines - placed_mines;
-                new_probs.extend(self.distribute_mines(&pl, boxes, to_place, &new_boxes, 0, max_total_mines));
+                new_probs.extend(self.distribute_mines(pl, boxes, to_place, &new_boxes, 0, max_total_mines));
             }
         }
 
@@ -308,19 +305,18 @@ impl ProbabilityCalculator {
     }
 
     /// Combine probability lines with same mine count
-    fn crunch_by_mine_count(&self, probs: Vec<ProbabilityLine>) -> Vec<ProbabilityLine> {
+    fn crunch_by_mine_count(&self, mut probs: Vec<ProbabilityLine>) -> Vec<ProbabilityLine> {
         if probs.is_empty() {
-            return Vec::new();
+            return probs;
         }
 
         let original_len = probs.len();
-        let mut sorted = probs;
-        sorted.sort_by_key(|pl| pl.mine_count);
+        probs.sort_by_key(|pl| pl.mine_count);
 
         let mut result = Vec::new();
         let mut current: Option<ProbabilityLine> = None;
 
-        for pl in sorted {
+        for pl in probs {
             match &mut current {
                 None => current = Some(pl),
                 Some(curr) if curr.mine_count == pl.mine_count => {
@@ -329,9 +325,8 @@ impl ProbabilityCalculator {
                         curr.mine_box_count[i] += pl.mine_box_count[i];
                     }
                 },
-                Some(curr) => {
-                    result.push(curr.clone());
-                    current = Some(pl);
+                Some(_) => {
+                    result.push(current.replace(pl).unwrap());
                 },
             }
         }
@@ -348,10 +343,15 @@ impl ProbabilityCalculator {
     fn store_probabilities(
         &self,
         held_probs: Vec<ProbabilityLine>,
-        working_probs: Vec<ProbabilityLine>,
+        mut working_probs: Vec<ProbabilityLine>,
         max_total_mines: usize,
         box_count: usize,
     ) -> Vec<ProbabilityLine> {
+        for wpl in &mut working_probs {
+            for i in 0..box_count {
+                wpl.mine_box_count[i] += wpl.allocated_mines[i] as f64 * wpl.solution_count;
+            }
+        }
         let crunched = self.crunch_by_mine_count(working_probs);
         let mut result = Vec::new();
 
@@ -373,32 +373,7 @@ impl ProbabilityCalculator {
             }
         }
 
-        // Combine by mine count
-        result.sort_by_key(|pl| pl.mine_count);
-        let mut final_result = Vec::new();
-        let mut current: Option<ProbabilityLine> = None;
-
-        for pl in result {
-            match &mut current {
-                None => current = Some(pl),
-                Some(curr) if curr.mine_count == pl.mine_count => {
-                    curr.solution_count += pl.solution_count;
-                    for i in 0..curr.mine_box_count.len() {
-                        curr.mine_box_count[i] += pl.mine_box_count[i];
-                    }
-                },
-                Some(curr) => {
-                    final_result.push(curr.clone());
-                    current = Some(pl);
-                },
-            }
-        }
-
-        if let Some(curr) = current {
-            final_result.push(curr);
-        }
-
-        final_result
+        self.crunch_by_mine_count(result)
     }
 
     fn set_probability(&self, board: &mut BoardSafety, x: usize, y: usize, probability: f32, frontier: bool) -> bool {
@@ -416,7 +391,7 @@ impl ProbabilityCalculator {
         } else {
             board[(x, y)] = CellSafety::Probability(CellProbability {
                 frontier,
-                mine_probability: probability,
+                mine_probability: probability.clamp(0.0, 1.0),
                 ..Default::default()
             });
         }
@@ -497,10 +472,7 @@ impl Solver for ProbabilityCalculator {
         }
         let mines_left = board.mines().saturating_sub(known_mines);
 
-        let mut total_frontier_cells = 0;
-        for box_data in &boxes {
-            total_frontier_cells += box_data.cells.len();
-        }
+        let mut total_frontier_cells = boxes.iter().map(|b| b.cells.len()).sum::<usize>();
 
         // Count wilderness cells
         let mut wilderness_count = 0;
@@ -551,38 +523,37 @@ impl Solver for ProbabilityCalculator {
         let mut wilderness_weighted_mines = 0.0f64;
         let mut wilderness_weighted_solutions = 0.0f64;
 
+        let (max_mine, min_mine) = held_probs.iter().fold((0usize, usize::MAX), |(max, min), pl| {
+            (
+                max.max(mines_left.saturating_sub(pl.mine_count)),
+                min.min(mines_left.saturating_sub(pl.mine_count)),
+            )
+        });
+
+        let mut ln_weight = vec![0.0f64; max_mine - min_mine + 1];
+        ln_weight[0] = 1.0;
+        for i in 0..(max_mine - min_mine) {
+            let idx = min_mine + i;
+            ln_weight[i + 1] =
+                ln_weight[i] + (tiles_off_edge.saturating_sub(idx) as f64).ln() - ((idx + 1) as f64).ln();
+        }
+
         for pl in &held_probs {
             if pl.mine_count >= min_total_mines {
                 let off_edge_mines = mines_left.saturating_sub(pl.mine_count);
 
-                // For small wilderness counts, use binomial. For large ones, avoid it to prevent overflow.
-                let (mult, use_binomial) = if tiles_off_edge <= MAX_BINOMIAL_N && off_edge_mines <= MAX_BINOMIAL_K {
-                    // Safe to use binomial for boards within safe limits
-                    (Self::binomial(tiles_off_edge, off_edge_mines), true)
-                } else {
-                    // For large wilderness areas, skip binomial weighting to avoid overflow to NaN/infinity
-                    // This provides an approximation that's accurate for large uniform probability distributions
-                    (1.0, false)
-                };
-
-                let weight = pl.solution_count * mult;
-                total_tally += weight;
+                let weight = ln_weight[off_edge_mines - min_mine].exp();
+                let pl_weight = pl.solution_count * weight;
+                total_tally += pl_weight;
 
                 for (i, box_data) in boxes.iter().enumerate() {
-                    let contribution = pl.mine_box_count[i] * mult / box_data.cells.len() as f64;
+                    let contribution = pl.mine_box_count[i] * weight / box_data.cells.len() as f64;
                     box_tallies[i] += contribution;
                 }
 
                 // For wilderness, accumulate weighted values
-                let base_weight = pl.solution_count * off_edge_mines as f64;
-                if use_binomial {
-                    wilderness_weighted_mines += mult * base_weight;
-                    wilderness_weighted_solutions += weight;
-                } else {
-                    // Without binomial, weight by solution count only
-                    wilderness_weighted_mines += base_weight;
-                    wilderness_weighted_solutions += pl.solution_count;
-                }
+                wilderness_weighted_mines += weight * pl.solution_count * off_edge_mines as f64;
+                wilderness_weighted_solutions += pl_weight;
             }
         }
 
