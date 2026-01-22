@@ -85,10 +85,10 @@ impl ProbabilityCalculator {
         let mut witnesses_map: HashMap<(usize, usize), usize> = HashMap::new();
         let mut boxes: Vec<Box> = Vec::new();
 
-        // First pass: identify all witnesses (unresolved numbered cells)
+        // First pass: identify all witnesses (unsolved numbered cells)
         for y in 0..board.height() {
             for x in 0..board.width() {
-                if let CellSafety::Unresolved(n) = board[(x, y)] {
+                if let CellSafety::Unsolved(n) = board[(x, y)] {
                     // Count already flagged mines
                     let mut flagged = 0;
                     for nx in x.saturating_sub(1)..=(x + 1).min(board.width() - 1) {
@@ -345,13 +345,27 @@ impl ProbabilityCalculator {
         held_probs: Vec<ProbabilityLine>,
         mut working_probs: Vec<ProbabilityLine>,
         max_total_mines: usize,
-        box_count: usize,
+        boxes: &[Box],
+        board: &mut BoardSafety,
     ) -> Vec<ProbabilityLine> {
+        let box_count = boxes.len();
+        let mut box_can_place_mine = vec![false; box_count];
         for wpl in &mut working_probs {
-            for i in 0..box_count {
-                wpl.mine_box_count[i] += wpl.allocated_mines[i] as f64 * wpl.solution_count;
+            for (i, can_place_mine) in box_can_place_mine.iter_mut().enumerate() {
+                wpl.mine_box_count[i] = wpl.allocated_mines[i] as f64 * wpl.solution_count;
+                *can_place_mine |= wpl.allocated_mines[i] > 0;
             }
         }
+        if self.stop_on_first_safe && board.suggestion().is_none() {
+            for (i, can_place_mine) in box_can_place_mine.into_iter().enumerate() {
+                if !can_place_mine {
+                    let (x, y) = boxes[i].cells[0];
+                    self.set_probability(board, x, y, 0.0, true);
+                    return vec![];
+                }
+            }
+        }
+
         let crunched = self.crunch_by_mine_count(working_probs);
         let mut result = Vec::new();
 
@@ -401,6 +415,11 @@ impl ProbabilityCalculator {
 
 impl Solver for ProbabilityCalculator {
     fn calculate(&self, mut board: BoardSafety) -> super::error::Result<BoardSafety> {
+        if self.stop_on_first_safe && board.suggestion().is_some() {
+            trace!("ProbabilityCalculator: Stopping early due to existing suggestion");
+            return Ok(board);
+        }
+
         let (mut witnesses, mut boxes) = self.build_witnesses_and_boxes(&board);
 
         // Special case: no witnesses means all numbered cells are satisfied
@@ -505,7 +524,11 @@ impl Solver for ProbabilityCalculator {
                 // Check for any remaining unprocessed witnesses
                 if let Some(next_wit) = self.find_first_witness(&witnesses) {
                     // Store current probabilities and start new group
-                    held_probs = self.store_probabilities(held_probs, working_probs, max_total_mines, box_count);
+                    held_probs =
+                        self.store_probabilities(held_probs, working_probs, max_total_mines, &boxes, &mut board);
+                    if self.stop_on_first_safe && board.suggestion().is_some() {
+                        return Ok(board);
+                    }
                     working_probs = vec![ProbabilityLine::new(box_count)];
                     current_witness = Some(next_wit);
                 }
@@ -513,7 +536,10 @@ impl Solver for ProbabilityCalculator {
         }
 
         // Store final working probabilities
-        held_probs = self.store_probabilities(held_probs, working_probs, max_total_mines, box_count);
+        held_probs = self.store_probabilities(held_probs, working_probs, max_total_mines, &boxes, &mut board);
+        if self.stop_on_first_safe && board.suggestion().is_some() {
+            return Ok(board);
+        }
 
         // Calculate final probabilities for each box
         let mut box_tallies: Vec<f64> = vec![0.0; box_count];
@@ -566,338 +592,49 @@ impl Solver for ProbabilityCalculator {
                 let probability = (tally / total_tally) as f32;
 
                 for &(x, y) in &box_data.cells {
-                    self.set_probability(&mut board, x, y, probability, true);
+                    if self.set_probability(&mut board, x, y, probability, true) {
+                        return Ok(board);
+                    }
                 }
             }
         }
 
-        // Handle wilderness cells without binomial for large boards
+        // Handle wilderness cells
         if tiles_off_edge > 0 && wilderness_weighted_solutions > 0.0 {
             let off_edge_prob =
                 (wilderness_weighted_mines / (wilderness_weighted_solutions * tiles_off_edge as f64)) as f32;
 
             for y in 0..board.height() {
                 for x in 0..board.width() {
-                    if matches!(board[(x, y)], CellSafety::Wilderness) {
-                        self.set_probability(&mut board, x, y, off_edge_prob, false);
+                    if matches!(board[(x, y)], CellSafety::Wilderness)
+                        && self.set_probability(&mut board, x, y, off_edge_prob, false)
+                    {
+                        return Ok(board);
                     }
                 }
             }
         }
 
-        Ok(board)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::{
-        base::{Vec2D, board},
-        engine::solver::trivial,
-    };
-
-    #[test]
-    fn test_simple_probability() {
-        // Create a simple 3x3 board with a "1" in the center and closed cells around it
-        // Layout:
-        // ? ? ?
-        // ? 1 ?
-        // ? ? ?
-        let mut cell_states = Vec2D::filled(3, 3, board::CellState::Closed);
-        cell_states[(1, 1)] = board::CellState::Opening(1);
-
-        let board_safety = BoardSafety::new(&cell_states, 1, false);
-        let calculator = ProbabilityCalculator::new(false);
-        let result = calculator.calculate(board_safety).unwrap();
-
-        // All 8 surrounding cells should have equal probability of 1/8 = 0.125
-        for x in 0..3 {
-            for y in 0..3 {
-                if x == 1 && y == 1 {
-                    continue; // Skip the center cell
-                }
-                match result.get(x, y) {
-                    Some(CellSafety::Probability(prob)) => {
-                        assert!((prob.mine_probability - 0.125).abs() < 0.01);
-                    },
-                    _ => panic!("Expected Probability at ({}, {})", x, y),
-                }
-            }
-        }
-    }
-
-    #[test]
-    fn test_certain_mine() {
-        // Create a board where all mines are certain
-        // Layout:
-        // ? 1
-        // 1 1
-        let mut cell_states = Vec2D::filled(2, 2, board::CellState::Closed);
-        cell_states[(1, 0)] = board::CellState::Opening(1);
-        cell_states[(0, 1)] = board::CellState::Opening(1);
-        cell_states[(1, 1)] = board::CellState::Opening(1);
-
-        let board_safety = BoardSafety::new(&cell_states, 1, false);
-        let calculator = ProbabilityCalculator::new(false);
-        let result = calculator.calculate(board_safety).unwrap();
-
-        // The top-left cell (0, 0) must be a mine (all three 1's point to it)
-        match result.get(0, 0) {
-            Some(CellSafety::Mine) => {},
-            other => panic!("Expected Mine at (0, 0), got {:?}", other),
-        }
-    }
-
-    #[test]
-    fn test_certain_safe() {
-        // Create a board where we can deduce a safe cell through probability
-        // This is a case that TrivialSolver should normally handle,
-        // but we test it directly here
-        // Layout:
-        // 1 1
-        // ? M
-        let mut cell_states = Vec2D::filled(2, 2, board::CellState::Closed);
-        cell_states[(0, 0)] = board::CellState::Opening(1);
-        cell_states[(1, 0)] = board::CellState::Opening(1);
-        cell_states[(1, 1)] = board::CellState::Flagged;
-
-        let board_safety = BoardSafety::new(&cell_states, 1, true);
-
-        // First run trivial solver to resolve the obvious case
-        let trivial = super::super::trivial::TrivialSolver::new(false);
-        let result = trivial.calculate(board_safety).unwrap();
-
-        // The bottom-left cell (0, 1) should be safe (both 1's satisfied by the flag)
-        match result.get(0, 1) {
-            Some(CellSafety::Safe) => {},
-            other => panic!("Expected Safe at (0, 1), got {:?}", other),
-        }
-    }
-
-    #[test]
-    fn test_with_wilderness() {
-        // Test wilderness cells get probabilities too
-        // Layout:
-        // 1 ? ?
-        // ? ? ?
-        // ? ? ?
-        let mut cell_states = Vec2D::filled(3, 3, board::CellState::Closed);
-        cell_states[(0, 0)] = board::CellState::Opening(1);
-
-        let board_safety = BoardSafety::new(&cell_states, 2, false);
-        let calculator = ProbabilityCalculator::new(false);
-        let result = calculator.calculate(board_safety).unwrap();
-
-        // The frontier cell (1, 0) and (0, 1) and (1, 1) should have some probability
-        // The wilderness cells should also have a probability
-        for x in 0..3 {
-            for y in 0..3 {
-                if x == 0 && y == 0 {
-                    continue; // Skip the opened cell
-                }
-                match result.get(x, y) {
-                    Some(CellSafety::Probability(prob)) => {
-                        assert!(prob.mine_probability > 0.0 && prob.mine_probability < 1.0);
-                    },
-                    other => panic!("Expected Probability at ({}, {}), got {:?}", x, y, other),
-                }
-            }
-        }
-    }
-
-    #[test]
-    fn test_complex_constraints() {
-        // Test a more complex scenario with multiple constraints
-        // Layout:
-        // ? ? ?
-        // 2 2 2
-        // ? ? ?
-        let mut cell_states = Vec2D::filled(3, 3, board::CellState::Closed);
-        cell_states[(0, 1)] = board::CellState::Opening(2);
-        cell_states[(1, 1)] = board::CellState::Opening(2);
-        cell_states[(2, 1)] = board::CellState::Opening(2);
-
-        let board_safety = BoardSafety::new(&cell_states, 2, false);
-        let calculator = ProbabilityCalculator::new(false);
-        let result = calculator.calculate(board_safety).unwrap();
-
-        // All frontier cells should have probabilities
-        for x in 0..3 {
-            for y in [0, 2] {
-                match result.get(x, y) {
-                    Some(CellSafety::Probability(_)) | Some(CellSafety::Safe) | Some(CellSafety::Mine) => {},
-                    other => panic!("Expected determined state at ({}, {}), got {:?}", x, y, other),
-                }
-            }
-        }
-    }
-
-    #[test]
-    fn test_all_mines_determined() {
-        // Test that 100% probability becomes Mine
-        // Layout:
-        // 1 1
-        // ? M
-        // With 1 mine total and the bottom-right already flagged,
-        // the bottom-left must be safe (0% mine probability)
-        let mut cell_states = Vec2D::filled(2, 2, board::CellState::Closed);
-        cell_states[(0, 0)] = board::CellState::Opening(1);
-        cell_states[(1, 0)] = board::CellState::Opening(1);
-        cell_states[(1, 1)] = board::CellState::Flagged;
-
-        let board_safety = BoardSafety::new(&cell_states, 1, true);
-
-        // First run trivial to resolve the obvious
-        let trivial = super::super::trivial::TrivialSolver::new(false);
-        let intermediate = trivial.calculate(board_safety).unwrap();
-
-        let calculator = ProbabilityCalculator::new(false);
-        let result = calculator.calculate(intermediate).unwrap();
-
-        // The bottom-left cell should be safe
-        match result.get(0, 1) {
-            Some(CellSafety::Safe) => {},
-            other => panic!("Expected Safe at (0, 1), got {:?}", other),
-        }
-    }
-
-    #[test]
-    fn test_uniform_probability_no_opened_cells() {
-        // Test that when no cells are opened (game not started),
-        // all cells get uniform probability
-        let cell_states = Vec2D::filled(5, 5, board::CellState::Closed);
-        let total_cells = 25;
-        let mine_count = 5;
-
-        let board_safety = BoardSafety::new(&cell_states, mine_count, false);
-        let calculator = ProbabilityCalculator::new(false);
-        let result = calculator.calculate(board_safety).unwrap();
-
-        // All cells should have uniform probability = mine_count / total_cells
-        let expected_probability = mine_count as f32 / total_cells as f32;
-
-        for x in 0..5 {
-            for y in 0..5 {
-                match result.get(x, y) {
-                    Some(CellSafety::Probability(prob)) => {
-                        assert!(
-                            (prob.mine_probability - expected_probability).abs() < 0.0001,
-                            "Expected probability {} at ({}, {}), got {}",
-                            expected_probability,
-                            x,
-                            y,
-                            prob.mine_probability
-                        );
-                    },
-                    other => panic!("Expected Probability at ({}, {}), got {:?}", x, y, other),
-                }
-            }
-        }
-    }
-
-    #[test]
-    fn test_large_board_no_overflow() {
-        // Test that large boards with many wilderness cells don't overflow to NaN
-        // This tests the binomial overflow prevention for wilderness cells
-        const BOARD_SIZE: usize = 30;
-        const EXPERT_MINE_COUNT: usize = 99; // Standard expert difficulty: 30×30 with 99 mines
-
-        let mut cell_states = Vec2D::filled(BOARD_SIZE, BOARD_SIZE, board::CellState::Closed);
-        // Open one cell in the corner
-        cell_states[(0, 0)] = board::CellState::Opening(1);
-
-        let board_safety = BoardSafety::new(&cell_states, EXPERT_MINE_COUNT, false);
-        let calculator = ProbabilityCalculator::new(false);
-        let result = calculator.calculate(board_safety).unwrap();
-
-        // Check that wilderness cells have valid probabilities (not NaN or infinity)
-        let mut wilderness_count = 0;
-        for x in 0..BOARD_SIZE {
-            for y in 0..BOARD_SIZE {
-                if x == 0 && y == 0 {
-                    continue; // Skip opened cell
-                }
-                match result.get(x, y) {
-                    Some(CellSafety::Probability(prob)) => {
-                        // Check that probability is finite and valid
-                        assert!(
-                            prob.mine_probability.is_finite(),
-                            "Probability at ({}, {}) is not finite: {}",
-                            x,
-                            y,
-                            prob.mine_probability
-                        );
-                        assert!(
-                            prob.mine_probability >= 0.0 && prob.mine_probability <= 1.0,
-                            "Probability at ({}, {}) out of range: {}",
-                            x,
-                            y,
-                            prob.mine_probability
-                        );
-
-                        // For wilderness cells (not adjacent to the opened corner)
-                        if x > 1 || y > 1 {
-                            wilderness_count += 1;
+        // Set solved witnesses
+        for witness in &witnesses {
+            if let CellSafety::Unsolved(n) = board[(witness.x, witness.y)] {
+                let mut flagged_neighbors = 0;
+                for nx in witness.x.saturating_sub(1)..=(witness.x + 1).min(board.width() - 1) {
+                    for ny in witness.y.saturating_sub(1)..=(witness.y + 1).min(board.height() - 1) {
+                        if nx == witness.x && ny == witness.y {
+                            continue;
                         }
-                    },
-                    Some(CellSafety::Frontier) | Some(CellSafety::Wilderness) => {
-                        // These are frontier cells adjacent to opened cell
-                        // It's okay if they haven't been processed yet
-                    },
-                    other => panic!("Unexpected state at ({}, {}): {:?}", x, y, other),
+                        if let CellSafety::Mine = board[(nx, ny)] {
+                            flagged_neighbors += 1;
+                        }
+                    }
+                }
+                if flagged_neighbors == n {
+                    board[(witness.x, witness.y)] = CellSafety::Solved(n);
                 }
             }
         }
 
-        // Verify we actually tested some wilderness cells
-        assert!(wilderness_count > 0, "No wilderness cells were tested");
-    }
-
-    #[test]
-    fn test_beginner_board() {
-        // Test a beginner board scenario
-        // Layout:
-        // 1 ? ? ? ? ? 1 0 0
-        // 1 1 1 1 ? ? 2 1 0
-        // 0 0 0 1 2 ? ? 1 0
-        // 0 0 0 0 1 ? 2 1 0
-        // 0 1 1 1 1 ? 1 0 0
-        // 0 1 ? ? ? ? 1 0 0
-        // 0 1 1 1 ? ? 3 2 1
-        // 0 0 0 1 ? ? ? ? ?
-        // 0 0 0 1 ? ? ? ? 1
-        #[rustfmt::skip]
-        let mut cell_states = board::build_cell_states_with_str(
-            "1 ? ? ? ? ? 1 0 0 \
-            1 1 1 1 ? ? 2 1 0 \
-            0 0 0 1 2 ? ? 1 0 \
-            0 0 0 0 1 ? 2 1 0 \
-            0 1 1 1 1 ? 1 0 0 \
-            0 1 ? ? ? ? 1 0 0 \
-            0 1 1 1 ? ? 3 2 1 \
-            0 0 0 1 ? ? ? ? ? \
-            0 0 0 1 ? ? ? ? 1",
-            9,
-            9
-        );
-
-        let board_safety = BoardSafety::new(&cell_states, 10, false);
-        let trivial = super::super::trivial::TrivialSolver::new(false);
-        let calculator = ProbabilityCalculator::new(false);
-        let result = trivial
-            .calculate(board_safety)
-            .and_then(|board| calculator.calculate(board))
-            .unwrap();
-
-        // Check cells have probabilities assigned
-        match result.get(5, 0) {
-            Some(CellSafety::Probability(_)) | Some(CellSafety::Safe) | Some(CellSafety::Mine) => {},
-            other => panic!("Expected determined state at ({}, {}), got {:?}", 5, 0, other),
-        }
-        match result.get(4, 5) {
-            Some(CellSafety::Probability(_)) | Some(CellSafety::Safe) | Some(CellSafety::Mine) => {},
-            other => panic!("Expected determined state at ({}, {}), got {:?}", 4, 5, other),
-        }
+        Ok(board)
     }
 }

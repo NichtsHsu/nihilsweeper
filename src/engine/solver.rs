@@ -13,7 +13,7 @@ pub mod trivial;
 pub fn default_engine() -> impl Solver {
     trivial::TrivialSolver::new(false)
         .then(probability::ProbabilityCalculator::new(false))
-        .then(half_chance::HalfChanceCheck)
+        .or(half_chance::HalfChanceCheck)
         .or(select(
             |board| board.conditions_more_than(1000.0),
             guessing::GuessingLogic,
@@ -45,15 +45,15 @@ impl Default for CellProbability {
 #[derive(Debug, Clone, Copy, Default)]
 pub enum CellSafety {
     #[default]
-    /// An unresolved closed cell that is not adjacent to any revealed numbers.
+    /// An unsolved closed cell that is not adjacent to any revealed numbers.
     Wilderness,
-    /// An unresolved closed cell that is adjacent to revealed number(s).
+    /// An unsolved closed cell that is adjacent to revealed number(s).
     Frontier,
-    /// A number cell that has adjacent unresolved cells.
-    Unresolved(u8),
+    /// A number cell that has adjacent unsolved cells.
+    Unsolved(u8),
     /// A number cell that has had all its adjacent mines or safe cells identified.
-    /// An empty cell always be `Resolved(0)`.
-    Resolved(u8),
+    /// An empty cell always be `Solved(0)`.
+    Solved(u8),
     /// A closed cell that has been determined to be safe.
     Safe,
     /// A closed cell that has been determined to be a mine.
@@ -89,8 +89,8 @@ impl BoardSafety {
         for y in 0..cell_states.dims().1 {
             for x in 0..cell_states.dims().0 {
                 cells[(x, y)] = match cell_states[(x, y)] {
-                    board::CellState::Opening(0) => CellSafety::Resolved(0),
-                    board::CellState::Opening(number) => CellSafety::Unresolved(number),
+                    board::CellState::Opening(0) => CellSafety::Solved(0),
+                    board::CellState::Opening(number) => CellSafety::Unsolved(number),
                     board::CellState::Flagged if admit_flags => CellSafety::Mine,
                     _ => check_frontier(x, y),
                 };

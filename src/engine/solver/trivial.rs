@@ -15,7 +15,7 @@ impl TrivialSolver {
     /// Analyze a single position on the board.
     /// Returns `Ok(true)` if `stop_on_first_safe` is set and a safe cell is found.
     fn calculate_position(&self, board: &mut BoardSafety, x: usize, y: usize) -> super::error::Result<bool> {
-        if let Some(&CellSafety::Unresolved(n)) = board.get(x, y) {
+        if let CellSafety::Unsolved(n) = board[(x, y)] {
             let mut flagged_neighbors = 0;
             let mut unopened_neighbors = 0;
             for nx in x.saturating_sub(1)..=(x + 1).min(board.width() - 1) {
@@ -33,8 +33,8 @@ impl TrivialSolver {
                 }
             }
             if flagged_neighbors == n && unopened_neighbors > 0 {
-                // All adjacent unresolved cells are safe
-                board[(x, y)] = CellSafety::Resolved(n);
+                // All adjacent unsolved cells are safe
+                board[(x, y)] = CellSafety::Solved(n);
                 for nx in x.saturating_sub(1)..=(x + 1).min(board.width() - 1) {
                     for ny in y.saturating_sub(1)..=(y + 1).min(board.height() - 1) {
                         if nx == x && ny == y {
@@ -58,8 +58,8 @@ impl TrivialSolver {
                     }
                 }
             } else if flagged_neighbors + unopened_neighbors == n && unopened_neighbors > 0 {
-                // All adjacent unresolved cells are mines
-                board[(x, y)] = CellSafety::Resolved(n);
+                // All adjacent unsolved cells are mines
+                board[(x, y)] = CellSafety::Solved(n);
                 for nx in x.saturating_sub(1)..=(x + 1).min(board.width() - 1) {
                     for ny in y.saturating_sub(1)..=(y + 1).min(board.height() - 1) {
                         if nx == x && ny == y {
