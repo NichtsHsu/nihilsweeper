@@ -7,12 +7,13 @@ mod error;
 mod ui;
 mod utils;
 
-use ui::MainWindow;
+use ui::App;
 
 fn main() -> crate::error::Result<()> {
     env_logger::init();
-    iced::application(MainWindow::new, MainWindow::update, MainWindow::view)
-        .subscription(MainWindow::subscriptions)
+    iced::application(App::new, App::update, App::view)
+        .theme(App::theme)
+        .subscription(App::subscriptions)
         .run()?;
 
     Ok(())

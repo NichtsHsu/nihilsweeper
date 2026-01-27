@@ -1,7 +1,6 @@
 use crate::{
     base::board,
     engine::solver::{self, BoardSafety, Solver},
-    ui::MainWindowMessage,
 };
 use iced::widget::canvas;
 use log::{error, trace};

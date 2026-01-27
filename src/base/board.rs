@@ -1,4 +1,5 @@
 use super::Vec2D;
+use base64::{Engine as _, engine::general_purpose::STANDARD as Base64};
 use rand::{rng, seq::SliceRandom};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -103,7 +104,73 @@ impl BoardState {
     }
 }
 
-pub fn build_cell_states_with_str(states_str: &str, width: usize, height: usize) -> Vec2D<CellState> {
+pub struct Base64Pack {
+    pub cell_contents: Vec2D<CellContent>,
+    pub mines: usize,
+    pub start_position: Option<(usize, usize)>,
+}
+
+/// Build number cells based on mine positions.
+///
+/// Cells should not be `CellContent::Number` before calling this function.
+///
+/// The argument `mines` hints which algorithm to use for better performance,
+/// it is not required, and can still work correctly with value 0.
+pub fn build_numbers(cell_content: &mut Vec2D<CellContent>, mines: usize) {
+    // If mine density > 50%, let number cells to count mines.
+    // Else let mine cells to add values of number cells.
+    if mines * 2 > cell_content.len() {
+        for y in 0..cell_content.dims().1 {
+            for x in 0..cell_content.dims().0 {
+                if cell_content[(x, y)] == CellContent::Mine {
+                    continue;
+                }
+                let mut count = 0;
+                for dy in [-1isize, 0, 1] {
+                    for dx in [-1isize, 0, 1] {
+                        if dx == 0 && dy == 0 {
+                            continue;
+                        }
+                        let nx = x as isize + dx;
+                        let ny = y as isize + dy;
+                        if nx >= 0 && ny >= 0 && cell_content.get(nx as usize, ny as usize) == Some(&CellContent::Mine)
+                        {
+                            count += 1;
+                        }
+                    }
+                }
+                if count > 0 {
+                    cell_content[(x, y)] = CellContent::Number(count);
+                }
+            }
+        }
+    } else {
+        for y in 0..cell_content.dims().1 {
+            for x in 0..cell_content.dims().0 {
+                if cell_content[(x, y)] != CellContent::Mine {
+                    continue;
+                }
+                for dy in [-1isize, 0, 1] {
+                    for dx in [-1isize, 0, 1] {
+                        if dx == 0 && dy == 0 {
+                            continue;
+                        }
+                        let nx = x as isize + dx;
+                        let ny = y as isize + dy;
+                        if nx >= 0
+                            && ny >= 0
+                            && let Some(c) = cell_content.get_mut(nx as usize, ny as usize)
+                        {
+                            c.add_one_mine()
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+pub fn build_cell_states_from_str(states_str: &str, width: usize, height: usize) -> Vec2D<CellState> {
     let mut cell_states = Vec2D::new(width, height);
     let mut pos = 0;
     for ch in states_str.chars() {
@@ -121,6 +188,126 @@ pub fn build_cell_states_with_str(states_str: &str, width: usize, height: usize)
         pos += 1;
     }
     cell_states
+}
+
+/// Build cell contents from a base64 string.
+///
+/// Returns cell contents and the number of mines, and optionally the start position.
+/// Returns `None` if the input is invalid.
+pub fn build_cell_contents_from_base64(base64: &str) -> Option<Base64Pack> {
+    let decoded = Base64.decode(base64).ok()?;
+
+    if decoded.is_empty() {
+        return None;
+    }
+
+    let mut pos = 0;
+    let byte_width = (decoded[0] & 0b0000_0111) as usize + 1;
+    let has_start_pos = (decoded[0] & 0b0000_1000) != 0;
+    pos += 1;
+
+    if decoded.len() < 1 + if has_start_pos { 4 } else { 2 } + 1 {
+        return None;
+    }
+
+    let mut width_bytes = [0; std::mem::size_of::<usize>()];
+    width_bytes[..byte_width].copy_from_slice(&decoded[pos..pos + byte_width]);
+    let width = usize::from_le_bytes(width_bytes);
+    pos += byte_width;
+
+    let mut height_bytes = [0; std::mem::size_of::<usize>()];
+    height_bytes[..byte_width].copy_from_slice(&decoded[pos..pos + byte_width]);
+    let height = usize::from_le_bytes(height_bytes);
+    pos += byte_width;
+
+    if width == 0 || height == 0 {
+        return None;
+    }
+
+    let mut mines = 0;
+    let mut cell_contents = Vec2D::new(width, height);
+    let mut start_position = None;
+
+    if has_start_pos {
+        let mut sx_bytes = [0; std::mem::size_of::<usize>()];
+        sx_bytes[..byte_width].copy_from_slice(&decoded[pos..pos + byte_width]);
+        let sx = usize::from_le_bytes(sx_bytes);
+        pos += byte_width;
+
+        let mut sy_bytes = [0; std::mem::size_of::<usize>()];
+        sy_bytes[..byte_width].copy_from_slice(&decoded[pos..pos + byte_width]);
+        let sy = usize::from_le_bytes(sy_bytes);
+        pos += byte_width;
+
+        start_position = Some((sx, sy));
+    }
+
+    for (i, cell_group) in decoded[pos..]
+        .iter()
+        .flat_map(|&b| (0..8).map(move |i| ((b >> i) & 1) != 0))
+        .enumerate()
+    {
+        let x = i % width;
+        let y = i / width;
+        if y >= height {
+            break;
+        }
+        if cell_group {
+            cell_contents[(x, y)] = CellContent::Mine;
+            mines += 1;
+        } else {
+            cell_contents[(x, y)] = CellContent::Empty;
+        }
+    }
+
+    build_numbers(&mut cell_contents, mines);
+
+    Some(Base64Pack {
+        cell_contents,
+        mines,
+        start_position,
+    })
+}
+
+pub fn encode_cell_contents_to_base64(cell_contents: &Vec2D<CellContent>, start_pos: Option<(usize, usize)>) -> String {
+    let width = cell_contents.dims().0;
+    let height = cell_contents.dims().1;
+    let byte_width = std::cmp::max(
+        (usize::BITS - width.leading_zeros()).div_ceil(8),
+        (usize::BITS - height.leading_zeros()).div_ceil(8),
+    )
+    .max(1) as usize;
+
+    let mut to_encode =
+        Vec::with_capacity(1 + byte_width * if start_pos.is_some() { 4 } else { 2 } + (width * height).div_ceil(8));
+
+    let first_byte = ((byte_width as u8 - 1) & 0b0000_0111) | if start_pos.is_some() { 0b0000_1000 } else { 0 };
+    to_encode.push(first_byte);
+
+    to_encode.extend_from_slice(&width.to_le_bytes()[..byte_width]);
+    to_encode.extend_from_slice(&height.to_le_bytes()[..byte_width]);
+    if let Some((sx, sy)) = start_pos {
+        to_encode.extend_from_slice(&sx.to_le_bytes()[..byte_width]);
+        to_encode.extend_from_slice(&sy.to_le_bytes()[..byte_width]);
+    }
+
+    let mut byte: u8 = 0;
+    for (i, cell) in cell_contents.iter().enumerate() {
+        let bit = match cell {
+            CellContent::Mine => 1,
+            _ => 0,
+        };
+        byte |= bit << (i % 8);
+        if i % 8 == 7 {
+            to_encode.push(byte);
+            byte = 0;
+        }
+    }
+    if !(width * height).is_multiple_of(8) {
+        to_encode.push(byte);
+    }
+
+    Base64.encode(&to_encode)
 }
 
 pub trait Board {
@@ -242,59 +429,7 @@ impl StandardBoard {
             self.cell_contents.data_mut().shuffle(&mut rng);
         }
 
-        // If mine density > 50%, let number cells to count mines.
-        // Else let mine cells to add values of number cells.
-        if self.mines * 2 > self.cell_contents.len() {
-            for y in 0..self.cell_contents.dims().1 {
-                for x in 0..self.cell_contents.dims().0 {
-                    if self.cell_contents[(x, y)] == CellContent::Mine {
-                        continue;
-                    }
-                    let mut count = 0;
-                    for dy in [-1isize, 0, 1] {
-                        for dx in [-1isize, 0, 1] {
-                            if dx == 0 && dy == 0 {
-                                continue;
-                            }
-                            let nx = x as isize + dx;
-                            let ny = y as isize + dy;
-                            if nx >= 0
-                                && ny >= 0
-                                && self.cell_contents.get(nx as usize, ny as usize) == Some(&CellContent::Mine)
-                            {
-                                count += 1;
-                            }
-                        }
-                    }
-                    if count > 0 {
-                        self.cell_contents[(x, y)] = CellContent::Number(count);
-                    }
-                }
-            }
-        } else {
-            for y in 0..self.cell_contents.dims().1 {
-                for x in 0..self.cell_contents.dims().0 {
-                    if self.cell_contents[(x, y)] != CellContent::Mine {
-                        continue;
-                    }
-                    for dy in [-1isize, 0, 1] {
-                        for dx in [-1isize, 0, 1] {
-                            if dx == 0 && dy == 0 {
-                                continue;
-                            }
-                            let nx = x as isize + dx;
-                            let ny = y as isize + dy;
-                            if nx >= 0
-                                && ny >= 0
-                                && let Some(c) = self.cell_contents.get_mut(nx as usize, ny as usize)
-                            {
-                                c.add_one_mine()
-                            }
-                        }
-                    }
-                }
-            }
-        }
+        build_numbers(&mut self.cell_contents, self.mines);
 
         self.state = BoardState::InProgress {
             opened_cells: 0,
@@ -351,19 +486,33 @@ impl StandardBoard {
         }
     }
 
-    pub fn new(mut width: usize, mut height: usize, mut mines: usize, chord_mode: ChordMode) -> Self {
+    pub fn new(mut width: usize, mut height: usize, mines: usize, chord_mode: ChordMode) -> Self {
         width = width.max(1);
         height = height.max(1);
-        mines = mines.clamp(1, width * height);
-        let cell_contents = Vec2D::new(width, height);
-        let cell_states = Vec2D::new(width, height);
         Self {
+            cell_contents: Vec2D::new(width, height),
+            mines: mines.clamp(1, width * height),
+            chord_mode,
+            state: BoardState::NotStarted,
+            cell_states: Vec2D::new(width, height),
+        }
+    }
+
+    pub fn import(base64: &str, chord_mode: ChordMode) -> Option<Self> {
+        let Base64Pack {
+            cell_contents, mines, ..
+        } = build_cell_contents_from_base64(base64)?;
+        let (width, height) = cell_contents.dims();
+        Some(Self {
             cell_contents,
             mines,
             chord_mode,
-            state: BoardState::NotStarted,
-            cell_states,
-        }
+            state: BoardState::InProgress {
+                opened_cells: 0,
+                flags: 0,
+            },
+            cell_states: Vec2D::new(width, height),
+        })
     }
 }
 
