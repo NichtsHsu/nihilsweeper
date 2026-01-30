@@ -1,4 +1,9 @@
-use crate::{base::board, config::GlobalConfig, engine::solver, ui::*};
+use crate::{
+    base::{board, encode_decode},
+    config::GlobalConfig,
+    engine::solver,
+    ui::*,
+};
 use iced::{Function, Task};
 use log::{debug, error, trace};
 use std::{ops::Not, sync::Arc};
@@ -15,6 +20,7 @@ pub enum TextInputType {
 #[derive(Debug, Clone)]
 pub enum ExportMessage {
     ButtonClicked,
+    StartExport(board::EncodeType),
     ExportCompleted(String),
     TimerTick,
 }
@@ -22,13 +28,13 @@ pub enum ExportMessage {
 #[derive(Debug, Clone)]
 pub enum ImportMessage {
     ButtonClicked,
-    StartImport(String),
+    StartImport(board::EncodeType, String),
     ImportCompleted,
     TimerTick,
 }
 
 #[derive(Debug, Clone)]
-pub enum MainWindowMessage {
+pub enum PlayerMessage {
     Game(game::GameMessage),
     TextInputChanged(TextInputType, String),
     CellSizeSubmit,
@@ -38,6 +44,8 @@ pub enum MainWindowMessage {
     Export(ExportMessage),
     Import(ImportMessage),
     ShowImportModal,
+    ShowExportModal,
+    ShowErrorModal(String),
 }
 
 #[derive(Debug, Clone)]
@@ -54,19 +62,19 @@ pub enum ImportButtonState {
     Completed { remaining_secs: u64 },
 }
 
-impl From<game::GameMessage> for MainWindowMessage {
+impl From<game::GameMessage> for PlayerMessage {
     fn from(message: game::GameMessage) -> Self {
-        MainWindowMessage::Game(message)
+        PlayerMessage::Game(message)
     }
 }
 
-impl From<overlay::SolverOverlayMessage> for MainWindowMessage {
+impl From<overlay::SolverOverlayMessage> for PlayerMessage {
     fn from(message: overlay::SolverOverlayMessage) -> Self {
-        MainWindowMessage::Solver(message)
+        PlayerMessage::Solver(message)
     }
 }
 
-pub struct MainWindow {
+pub struct Player {
     config: GlobalConfig,
     skin_manager: Option<skin::SkinManager>,
     skin: Option<skin::Skin>,
@@ -82,7 +90,7 @@ pub struct MainWindow {
     export_button_state: ExportButtonState,
 }
 
-impl MainWindow {
+impl Player {
     const TEXT_INPUT_UPPER: [usize; 4] = [1000, 1000, 1000000, 64];
     const TEXT_INPUT_LOWER: [usize; 4] = [1, 1, 1, 8];
     const TEXT_INPUT_DEFAULTS: [usize; 4] = [30, 16, 99, 24];
@@ -163,7 +171,7 @@ impl MainWindow {
         }
     }
 
-    fn new_game(&mut self, board: Box<dyn board::Board>) -> iced::Task<MainWindowMessage> {
+    fn new_game(&mut self, board: Box<dyn board::Board>) -> iced::Task<PlayerMessage> {
         self.game = self
             .skin
             .clone()
@@ -192,7 +200,7 @@ impl MainWindow {
         Task::none()
     }
 
-    fn update_solver(&mut self) -> Option<Task<MainWindowMessage>> {
+    fn update_solver(&mut self) -> Option<Task<PlayerMessage>> {
         if self.config.show_probabilities
             && let Some(game) = &self.game
         {
@@ -206,7 +214,7 @@ impl MainWindow {
             return Some(
                 self.solver_overlay
                     .update_solver(game.board())
-                    .map(MainWindowMessage::Solver),
+                    .map(PlayerMessage::Solver),
             );
         }
         None
@@ -214,15 +222,17 @@ impl MainWindow {
 
     fn boxed_import<T: board::Board + Send + 'static>(
         &self,
-        import: impl Fn(&str, board::ChordMode) -> Option<T> + 'static,
-    ) -> impl Fn(&str) -> Option<Box<dyn board::Board + Send>> + 'static {
+        import: impl Fn(board::ImportPack, board::ChordMode) -> Option<T> + 'static,
+    ) -> impl Fn(board::ImportPack) -> Option<Box<dyn board::Board + Send>> + 'static {
         let chord_mode = self.config.chord_mode;
-        move |base64: &str| import(base64, chord_mode).map(|board| Box::new(board) as Box<dyn board::Board + Send>)
+        move |pack: board::ImportPack| {
+            import(pack, chord_mode).map(|board| Box::new(board) as Box<dyn board::Board + Send>)
+        }
     }
 
-    pub fn update(&mut self, message: MainWindowMessage) -> Task<MainWindowMessage> {
+    pub fn update(&mut self, message: PlayerMessage) -> Task<PlayerMessage> {
         match message {
-            MainWindowMessage::Game(msg) => {
+            PlayerMessage::Game(msg) => {
                 let is_face_clicked = matches!(msg, game::GameMessage::FaceClicked);
 
                 if let game::GameMessage::ViewportChanged(viewport) = msg {
@@ -262,14 +272,14 @@ impl MainWindow {
                     }
                 }
             },
-            MainWindowMessage::TextInputChanged(input_type, value) => {
+            PlayerMessage::TextInputChanged(input_type, value) => {
                 if value.is_empty() {
                     self.text_input_states[input_type as usize] = value;
                     if input_type == TextInputType::CellSize {
                         self.config.cell_size = if let Some(game) = &self.game {
                             game.cell_size()
                         } else {
-                            MainWindow::TEXT_INPUT_DEFAULTS[TextInputType::CellSize as usize] as u32
+                            Player::TEXT_INPUT_DEFAULTS[TextInputType::CellSize as usize] as u32
                         };
                     } else {
                         self.config.board[input_type as usize] = if let Some(game) = &self.game {
@@ -280,13 +290,13 @@ impl MainWindow {
                                 _ => unreachable!(),
                             }
                         } else {
-                            MainWindow::TEXT_INPUT_DEFAULTS[input_type as usize]
+                            Player::TEXT_INPUT_DEFAULTS[input_type as usize]
                         };
                     }
                     return Task::none();
                 }
                 if let Ok(mut num) = value.parse::<usize>() {
-                    num = num.clamp(1, MainWindow::TEXT_INPUT_UPPER[input_type as usize]);
+                    num = num.clamp(1, Player::TEXT_INPUT_UPPER[input_type as usize]);
                     self.text_input_states[input_type as usize] = num.to_string();
                     if input_type == TextInputType::CellSize {
                         self.config.cell_size = num as u32;
@@ -299,11 +309,11 @@ impl MainWindow {
                     );
                 }
             },
-            MainWindowMessage::CellSizeSubmit => {
+            PlayerMessage::CellSizeSubmit => {
                 self.config.cell_size = self
                     .config
                     .cell_size
-                    .max(MainWindow::TEXT_INPUT_LOWER[TextInputType::CellSize as usize] as u32);
+                    .max(Player::TEXT_INPUT_LOWER[TextInputType::CellSize as usize] as u32);
                 self.text_input_states[TextInputType::CellSize as usize] = self.config.cell_size.to_string();
                 trace!("Cell size submitted: {}", self.config.cell_size);
                 let skin = self
@@ -336,7 +346,7 @@ impl MainWindow {
                     });
                 }
             },
-            MainWindowMessage::ChordModeToggled(enabled) => {
+            PlayerMessage::ChordModeToggled(enabled) => {
                 self.config.chord_mode = if enabled {
                     board::ChordMode::LeftClick
                 } else {
@@ -347,7 +357,7 @@ impl MainWindow {
                     game.update(game::GameMessage::ChordModeChanged(self.config.chord_mode));
                 }
             },
-            MainWindowMessage::Scrolled(viewport) => {
+            PlayerMessage::Scrolled(viewport) => {
                 if let Some(game) = &mut self.game {
                     let absolute_offset = viewport.absolute_offset();
                     let bounds = viewport.bounds();
@@ -363,7 +373,7 @@ impl MainWindow {
                     self.solver_overlay.set_viewport(self.viewport);
                 }
             },
-            MainWindowMessage::Solver(msg) => match &msg {
+            PlayerMessage::Solver(msg) => match &msg {
                 overlay::SolverOverlayMessage::SetEnabled(true) => {
                     self.config.show_probabilities = true;
                     self.solver_overlay.update(msg);
@@ -397,30 +407,39 @@ impl MainWindow {
                 },
                 _ => self.solver_overlay.update(msg),
             },
-            MainWindowMessage::Import(msg) => match msg {
+            PlayerMessage::Import(msg) => match msg {
                 ImportMessage::ButtonClicked => match self.import_button_state {
                     ImportButtonState::Import => {
-                        return Task::done(MainWindowMessage::ShowImportModal);
+                        return Task::done(PlayerMessage::ShowImportModal);
                     },
                     ImportButtonState::Completed { .. } => self.import_button_state = ImportButtonState::Import,
                     _ => (),
                 },
-                ImportMessage::StartImport(string) => {
+                ImportMessage::StartImport(encode_type, string) => {
+                    debug!("Start import board with type {} and text {}", encode_type, string);
                     let board_to_import = Arc::clone(&self.board_to_import);
+                    let decoder = match encode_type {
+                        board::EncodeType::Base64 => encode_decode::base64::decode,
+                        board::EncodeType::PttUrl => encode_decode::ptt_url::decode,
+                        board::EncodeType::LlamaUrl => encode_decode::llama_url::decode,
+                    };
                     let import = self.boxed_import(board::StandardBoard::import);
                     self.import_button_state = ImportButtonState::Importing;
                     return Task::perform(
                         async move {
-                            let board = import(&string);
+                            let pack = decoder(&string);
+                            let board = pack.and_then(import);
                             let mut lock = board_to_import.lock().await;
                             *lock = board;
-                            ImportMessage::ImportCompleted
+                            PlayerMessage::Import(ImportMessage::ImportCompleted)
                         },
-                        MainWindowMessage::Import,
+                        std::convert::identity,
                     );
                 },
                 ImportMessage::ImportCompleted => {
+                    debug!("Import completed, retrieving board");
                     let mut board = self.board_to_import.blocking_lock().take();
+                    trace!("Retrieved board from import: {}", board.is_some());
                     match board {
                         Some(board) => {
                             let task = self.new_game(board);
@@ -435,6 +454,9 @@ impl MainWindow {
                         None => {
                             self.import_button_state = ImportButtonState::Import;
                             error!("Failed to import board: invalid data");
+                            return Task::done(PlayerMessage::ShowErrorModal(
+                                "Failed to import, check the log for details".to_string(),
+                            ));
                         },
                     };
                 },
@@ -450,26 +472,40 @@ impl MainWindow {
                     }
                 },
             },
-            MainWindowMessage::Export(msg) => match msg {
+            PlayerMessage::Export(msg) => match msg {
                 ExportMessage::ButtonClicked => match self.export_button_state {
                     ExportButtonState::Export => {
-                        if let Some(game) = &self.game {
-                            self.export_button_state = ExportButtonState::Exporting;
-                            let cell_contents = game.board().cell_contents().clone();
-                            let start_pos = game.board().start_position();
-                            return Task::perform(
-                                async move {
-                                    let encoded = board::encode_cell_contents_to_base64(&cell_contents, start_pos);
-                                    ExportMessage::ExportCompleted(encoded)
-                                },
-                                MainWindowMessage::Export,
-                            );
-                        }
+                        return Task::done(PlayerMessage::ShowExportModal);
                     },
                     ExportButtonState::Copied { .. } => self.export_button_state = ExportButtonState::Export,
                     _ => (),
                 },
+                ExportMessage::StartExport(encode_type) => {
+                    if let Some(game) = &self.game {
+                        debug!("Start export board with type {}", encode_type);
+                        self.export_button_state = ExportButtonState::Exporting;
+                        let cell_contents = game.board().cell_contents().clone();
+                        let start_pos = game.board().start_position();
+                        let encoder = match encode_type {
+                            board::EncodeType::Base64 => encode_decode::base64::encode,
+                            board::EncodeType::PttUrl => {
+                                |cell_content: &_, _| encode_decode::ptt_url::encode(cell_content)
+                            },
+                            board::EncodeType::LlamaUrl => {
+                                |cell_content: &_, _| encode_decode::llama_url::encode(cell_content)
+                            },
+                        };
+                        return Task::perform(
+                            async move {
+                                let encoded = encoder(&cell_contents, start_pos);
+                                ExportMessage::ExportCompleted(encoded)
+                            },
+                            PlayerMessage::Export,
+                        );
+                    }
+                },
                 ExportMessage::ExportCompleted(data) => {
+                    debug!("Export completed, copying data to clipboard: {}", data);
                     let task = iced::clipboard::write(data);
                     self.export_button_state = ExportButtonState::Copied { remaining_secs: 3 };
                     return task;
@@ -491,7 +527,7 @@ impl MainWindow {
         Task::none()
     }
 
-    pub fn view(&self) -> iced::Element<'_, MainWindowMessage> {
+    pub fn view(&self) -> iced::Element<'_, PlayerMessage> {
         let enable_button = !matches!(self.export_button_state, ExportButtonState::Exporting)
             && !matches!(self.import_button_state, ImportButtonState::Importing);
 
@@ -511,36 +547,34 @@ impl MainWindow {
                     iced::widget::text("Width:").size(16).width(iced::FillPortion(1)),
                     iced::widget::TextInput::new("width", &self.text_input_states[TextInputType::Width as usize])
                         .width(iced::FillPortion(2))
-                        .on_input(MainWindowMessage::TextInputChanged.with(TextInputType::Width))
+                        .on_input(PlayerMessage::TextInputChanged.with(TextInputType::Width))
                 ]
                 .align_y(iced::alignment::Vertical::Center),
                 iced::widget::row![
                     iced::widget::text("Height:").size(16).width(iced::FillPortion(1)),
                     iced::widget::TextInput::new("height", &self.text_input_states[TextInputType::Height as usize])
                         .width(iced::FillPortion(2))
-                        .on_input(MainWindowMessage::TextInputChanged.with(TextInputType::Height))
+                        .on_input(PlayerMessage::TextInputChanged.with(TextInputType::Height))
                 ]
                 .align_y(iced::alignment::Vertical::Center),
                 iced::widget::row![
                     iced::widget::text("Mines:").size(16).width(iced::FillPortion(1)),
                     iced::widget::TextInput::new("mines", &self.text_input_states[TextInputType::Mines as usize])
                         .width(iced::FillPortion(2))
-                        .on_input(MainWindowMessage::TextInputChanged.with(TextInputType::Mines))
+                        .on_input(PlayerMessage::TextInputChanged.with(TextInputType::Mines))
                 ]
                 .align_y(iced::alignment::Vertical::Center),
                 iced::widget::center_x(
                     iced::widget::button(iced::widget::text("New Game").align_x(iced::alignment::Horizontal::Center))
                         .width(120.0)
-                        .on_press_maybe(
-                            enable_button.then_some(MainWindowMessage::Game(game::GameMessage::FaceClicked))
-                        )
+                        .on_press_maybe(enable_button.then_some(PlayerMessage::Game(game::GameMessage::FaceClicked)))
                 ),
                 iced::widget::center_x(
                     iced::widget::button(iced::widget::text("Continue").align_x(iced::alignment::Horizontal::Center))
                         .width(120.0)
                         .on_press_maybe(self.game.as_ref().and_then(|game| {
                             (enable_button && matches!(game.board().state(), board::BoardState::Lost { .. }))
-                                .then_some(MainWindowMessage::Game(game::GameMessage::Continue))
+                                .then_some(PlayerMessage::Game(game::GameMessage::Continue))
                         }))
                 ),
                 iced::widget::center_x(
@@ -548,7 +582,7 @@ impl MainWindow {
                         .width(120.0)
                         .on_press_maybe(self.game.as_ref().and_then(|game| {
                             (enable_button && !matches!(game.board().state(), board::BoardState::NotStarted))
-                                .then_some(MainWindowMessage::Game(game::GameMessage::Replay))
+                                .then_some(PlayerMessage::Game(game::GameMessage::Replay))
                         }))
                 ),
                 iced::widget::center_x(
@@ -558,7 +592,7 @@ impl MainWindow {
                     .width(120.0)
                     .on_press_maybe(self.game.as_ref().and_then(|game| {
                         (enable_button && !matches!(game.board().state(), board::BoardState::NotStarted))
-                            .then_some(MainWindowMessage::Export(ExportMessage::ButtonClicked))
+                            .then_some(PlayerMessage::Export(ExportMessage::ButtonClicked))
                     }))
                 ),
                 iced::widget::center_x(
@@ -567,7 +601,7 @@ impl MainWindow {
                     )
                     .width(120.0)
                     .on_press_maybe(self.game.as_ref().and_then(|game| {
-                        enable_button.then_some(MainWindowMessage::Import(ImportMessage::ButtonClicked))
+                        enable_button.then_some(PlayerMessage::Import(ImportMessage::ButtonClicked))
                     }))
                 ),
             ]
@@ -586,10 +620,10 @@ impl MainWindow {
             iced::widget::text("Cell Size:").size(16).width(iced::FillPortion(1)),
             iced::widget::TextInput::new("cell size", &self.text_input_states[TextInputType::CellSize as usize])
                 .width(iced::FillPortion(1))
-                .on_input(MainWindowMessage::TextInputChanged.with(TextInputType::CellSize))
-                .on_submit(MainWindowMessage::CellSizeSubmit),
+                .on_input(PlayerMessage::TextInputChanged.with(TextInputType::CellSize))
+                .on_submit(PlayerMessage::CellSizeSubmit),
             iced::widget::button("↵")
-                .on_press(MainWindowMessage::CellSizeSubmit)
+                .on_press(PlayerMessage::CellSizeSubmit)
                 .width(iced::Length::Shrink)
         ]
         .align_y(iced::alignment::Vertical::Center);
@@ -599,14 +633,14 @@ impl MainWindow {
                 iced::widget::center_x(board_control),
                 iced::widget::checkbox(self.config.chord_mode == board::ChordMode::LeftClick)
                     .label("Left-click chord")
-                    .on_toggle(MainWindowMessage::ChordModeToggled),
+                    .on_toggle(PlayerMessage::ChordModeToggled),
                 iced::widget::checkbox(self.config.show_probabilities)
                     .label("Show Probability")
-                    .on_toggle(|enabled| MainWindowMessage::Solver(overlay::SolverOverlayMessage::SetEnabled(enabled))),
+                    .on_toggle(|enabled| PlayerMessage::Solver(overlay::SolverOverlayMessage::SetEnabled(enabled))),
                 iced::widget::checkbox(self.config.solver_admit_flags)
                     .label("Admits Flags")
                     .on_toggle_maybe(self.config.show_probabilities.then_some(|admit_flags| {
-                        MainWindowMessage::Solver(overlay::SolverOverlayMessage::SetAdmitFlags(admit_flags))
+                        PlayerMessage::Solver(overlay::SolverOverlayMessage::SetAdmitFlags(admit_flags))
                     })),
                 cell_size
             ]
@@ -618,8 +652,8 @@ impl MainWindow {
             iced::widget::row![
                 control_panel,
                 iced::widget::Stack::with_capacity(2)
-                    .push(game.view().map(MainWindowMessage::Game))
-                    .push(self.solver_overlay.view().map(MainWindowMessage::Solver))
+                    .push(game.view().map(PlayerMessage::Game))
+                    .push(self.solver_overlay.view().map(PlayerMessage::Solver))
             ]
         } else {
             iced::widget::row![
@@ -634,7 +668,7 @@ impl MainWindow {
             vertical: Default::default(),
             horizontal: Default::default(),
         })
-        .on_scroll(MainWindowMessage::Scrolled)
+        .on_scroll(PlayerMessage::Scrolled)
         .into()
     }
 
@@ -642,11 +676,11 @@ impl MainWindow {
         Some(self.theme.clone())
     }
 
-    pub fn subscriptions(&self) -> iced::Subscription<MainWindowMessage> {
+    pub fn subscriptions(&self) -> iced::Subscription<PlayerMessage> {
         let listen = iced::event::listen_with(|event, _, _| match event {
             iced::Event::Window(iced::window::Event::Opened { size, .. }) => {
                 trace!("Window opened with size: {:?}", size);
-                Some(MainWindowMessage::Game(game::GameMessage::ViewportChanged(
+                Some(PlayerMessage::Game(game::GameMessage::ViewportChanged(
                     iced::Rectangle {
                         x: 0.0,
                         y: 0.0,
@@ -657,7 +691,7 @@ impl MainWindow {
             },
             iced::Event::Window(iced::window::Event::Resized(size)) => {
                 trace!("Window resized to size: {:?}", size);
-                Some(MainWindowMessage::Game(game::GameMessage::ViewportChanged(
+                Some(PlayerMessage::Game(game::GameMessage::ViewportChanged(
                     iced::Rectangle {
                         x: 0.0,
                         y: 0.0,
@@ -671,13 +705,13 @@ impl MainWindow {
 
         let import_timer = match &self.import_button_state {
             ImportButtonState::Completed { .. } => iced::time::every(std::time::Duration::from_secs(1))
-                .map(|_| MainWindowMessage::Import(ImportMessage::TimerTick)),
+                .map(|_| PlayerMessage::Import(ImportMessage::TimerTick)),
             _ => iced::Subscription::none(),
         };
 
         let export_timer = match &self.export_button_state {
             ExportButtonState::Copied { .. } => iced::time::every(std::time::Duration::from_secs(1))
-                .map(|_| MainWindowMessage::Export(ExportMessage::TimerTick)),
+                .map(|_| PlayerMessage::Export(ExportMessage::TimerTick)),
             _ => iced::Subscription::none(),
         };
 

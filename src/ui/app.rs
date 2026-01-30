@@ -2,42 +2,40 @@ use iced::Task;
 use log::warn;
 
 use crate::ui::{
-    main_window::{MainWindow, MainWindowMessage},
+    player::{Player, PlayerMessage},
     *,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum Modal {
+pub enum BaseWindow {
     #[default]
-    MainWindow,
-    ImportGame,
-}
-
-#[derive(Debug, Clone)]
-pub enum ModalMessage {
-    TextChange(String),
-    Submit,
-    Close,
+    Player,
 }
 
 #[derive(Debug, Clone)]
 pub enum AppMessage {
-    Modal(ModalMessage),
-    MainWindow(main_window::MainWindowMessage),
+    Modal(modal::ModalMessage),
+    Player(player::PlayerMessage),
 }
 
 pub struct App {
-    current_modal: Modal,
-    main_window: main_window::MainWindow,
-    modal_text_input: String,
+    base_window: BaseWindow,
+    current_modal: modal::Modal,
+    player: player::Player,
+    export: modal::export::ExportModal,
+    import: modal::import::ImportModal,
+    error: modal::error::ErrorModal,
 }
 
 impl App {
     pub fn new() -> Self {
         Self {
-            current_modal: Modal::default(),
-            main_window: main_window::MainWindow::new(),
-            modal_text_input: String::default(),
+            base_window: BaseWindow::default(),
+            current_modal: modal::Modal::default(),
+            player: player::Player::new(),
+            export: modal::export::ExportModal::new(),
+            import: modal::import::ImportModal::new(),
+            error: modal::error::ErrorModal::new(),
         }
     }
 
@@ -72,78 +70,89 @@ impl App {
 
     pub fn update(&mut self, msg: AppMessage) -> Task<AppMessage> {
         match msg {
-            AppMessage::MainWindow(MainWindowMessage::ShowImportModal) => {
-                self.current_modal = Modal::ImportGame;
+            AppMessage::Player(PlayerMessage::ShowImportModal) => {
+                self.current_modal = modal::Modal::ImportGame;
             },
-            AppMessage::MainWindow(msg) => return self.main_window.update(msg).map(AppMessage::MainWindow),
-            AppMessage::Modal(msg) => match msg {
-                ModalMessage::TextChange(new_text) => {
-                    self.modal_text_input = new_text;
-                },
-                ModalMessage::Submit => {
-                    let modal = std::mem::replace(&mut self.current_modal, Modal::MainWindow);
-                    let text = std::mem::take(&mut self.modal_text_input);
-                    match modal {
-                        Modal::ImportGame => {
-                            return self
-                                .main_window
-                                .update(MainWindowMessage::Import(main_window::ImportMessage::StartImport(text)))
-                                .map(AppMessage::MainWindow);
-                        },
-                        Modal::MainWindow => {
-                            warn!("ModalMessage::Submit should not be received in MainWindow modal.");
-                        },
-                    }
-                },
-                ModalMessage::Close => {
-                    self.current_modal = Modal::MainWindow;
-                    self.modal_text_input.clear();
-                },
+            AppMessage::Player(PlayerMessage::ShowExportModal) => {
+                self.current_modal = modal::Modal::ExportGame;
+            },
+            AppMessage::Player(PlayerMessage::ShowErrorModal(err)) => {
+                self.error.error_message = err;
+                self.current_modal = modal::Modal::Error;
+            },
+            AppMessage::Player(msg) => return self.player.update(msg).map(AppMessage::Player),
+            AppMessage::Modal(modal::ModalMessage::Import(modal::import::ImportMessage::Cancel))
+            | AppMessage::Modal(modal::ModalMessage::Export(modal::export::ExportMessage::Cancel))
+            | AppMessage::Modal(modal::ModalMessage::Error(modal::error::ErrorMessage::Acknowledge)) => {
+                self.current_modal = modal::Modal::None;
+            },
+            AppMessage::Modal(modal::ModalMessage::Import(msg)) => {
+                if let modal::import::ImportMessage::Confirm = msg {
+                    self.current_modal = modal::Modal::None;
+                    let import_type = self.import.config.import_type;
+                    let text = std::mem::take(&mut self.import.config.text);
+                    self.import.update(msg);
+                    return self
+                        .player
+                        .update(PlayerMessage::Import(player::ImportMessage::StartImport(
+                            import_type,
+                            text,
+                        )))
+                        .map(AppMessage::Player);
+                }
+                self.import.update(msg);
+            },
+            AppMessage::Modal(modal::ModalMessage::Export(msg)) => {
+                if let modal::export::ExportMessage::Confirm = msg {
+                    self.current_modal = modal::Modal::None;
+                    let export_type = self.export.config.export_type;
+                    self.export.update(msg);
+                    return self
+                        .player
+                        .update(PlayerMessage::Export(player::ExportMessage::StartExport(export_type)))
+                        .map(AppMessage::Player);
+                }
+                self.export.update(msg);
             },
         }
         Task::none()
     }
 
     pub fn view(&self) -> iced::Element<'_, AppMessage> {
+        let base = match self.base_window {
+            BaseWindow::Player => self.player.view().map(AppMessage::Player),
+        };
         match self.current_modal {
-            Modal::ImportGame => {
-                let container = iced::widget::container(
-                    iced::widget::column![
-                        iced::widget::text("Please input the base64 code").size(20),
-                        iced::widget::text_input("Please input here...", &self.modal_text_input)
-                            .on_input(|text| AppMessage::Modal(ModalMessage::TextChange(text)))
-                            .on_submit(AppMessage::Modal(ModalMessage::Submit))
-                            .padding(10),
-                        iced::widget::row![
-                            iced::widget::button(iced::widget::text("Confirm"))
-                                .on_press(AppMessage::Modal(ModalMessage::Submit))
-                                .padding([10, 20]),
-                            iced::widget::button(iced::widget::text("Cancel"))
-                                .on_press(AppMessage::Modal(ModalMessage::Close))
-                                .padding([10, 20]),
-                        ]
-                        .spacing(10)
-                    ]
-                    .spacing(15),
-                )
-                .width(400)
-                .padding(20)
-                .style(iced::widget::container::rounded_box);
-                App::modal(
-                    self.main_window.view().map(AppMessage::MainWindow),
-                    container,
-                    AppMessage::Modal(ModalMessage::Close),
-                )
-            },
-            Modal::MainWindow => self.main_window.view().map(AppMessage::MainWindow),
+            modal::Modal::ImportGame => App::modal(
+                base,
+                self.import
+                    .view()
+                    .map(modal::ModalMessage::Import)
+                    .map(AppMessage::Modal),
+                AppMessage::Modal(modal::ModalMessage::Import(modal::import::ImportMessage::Cancel)),
+            ),
+            modal::Modal::ExportGame => App::modal(
+                base,
+                self.export
+                    .view()
+                    .map(modal::ModalMessage::Export)
+                    .map(AppMessage::Modal),
+                AppMessage::Modal(modal::ModalMessage::Export(modal::export::ExportMessage::Cancel)),
+            ),
+            modal::Modal::Error => App::modal(
+                base,
+                self.error.view().map(modal::ModalMessage::Error).map(AppMessage::Modal),
+                AppMessage::Modal(modal::ModalMessage::Error(modal::error::ErrorMessage::Acknowledge)),
+            ),
+            modal::Modal::None => base,
         }
     }
 
     pub fn theme(&self) -> Option<iced::Theme> {
-        self.main_window.theme()
+        self.player.theme()
     }
 
     pub fn subscriptions(&self) -> iced::Subscription<AppMessage> {
-        self.main_window.subscriptions().map(AppMessage::MainWindow)
+        self.player.subscriptions().map(AppMessage::Player)
     }
 }

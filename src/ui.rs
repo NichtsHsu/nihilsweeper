@@ -1,7 +1,10 @@
+mod analyzer;
 mod app;
-pub mod game;
-mod main_window;
+mod editor;
+mod game;
 mod overlay;
+mod player;
+mod modal;
 pub mod skin;
 
 pub use app::App;

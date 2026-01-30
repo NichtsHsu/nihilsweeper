@@ -1,5 +1,4 @@
 use super::Vec2D;
-use base64::{Engine as _, engine::general_purpose::STANDARD as Base64};
 use rand::{rng, seq::SliceRandom};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -104,7 +103,28 @@ impl BoardState {
     }
 }
 
-pub struct Base64Pack {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EncodeType {
+    Base64,
+    PttUrl,
+    LlamaUrl,
+}
+
+impl EncodeType {
+    pub const ALL: [EncodeType; 3] = [EncodeType::Base64, EncodeType::PttUrl, EncodeType::LlamaUrl];
+}
+
+impl std::fmt::Display for EncodeType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            EncodeType::Base64 => write!(f, "Base64"),
+            EncodeType::PttUrl => write!(f, "PTT URL"),
+            EncodeType::LlamaUrl => write!(f, "Llama URL"),
+        }
+    }
+}
+
+pub struct ImportPack {
     pub cell_contents: Vec2D<CellContent>,
     pub mines: usize,
     pub start_position: Option<(usize, usize)>,
@@ -168,146 +188,6 @@ pub fn build_numbers(cell_content: &mut Vec2D<CellContent>, mines: usize) {
             }
         }
     }
-}
-
-pub fn build_cell_states_from_str(states_str: &str, width: usize, height: usize) -> Vec2D<CellState> {
-    let mut cell_states = Vec2D::new(width, height);
-    let mut pos = 0;
-    for ch in states_str.chars() {
-        let x = pos % width;
-        let y = pos / width;
-        if y >= height {
-            break;
-        }
-        cell_states[(x, y)] = match ch {
-            '?' => CellState::Closed,
-            'M' => CellState::Flagged,
-            '0'..='8' => CellState::Opening(ch.to_digit(10).unwrap() as u8),
-            _ => continue,
-        };
-        pos += 1;
-    }
-    cell_states
-}
-
-/// Build cell contents from a base64 string.
-///
-/// Returns cell contents and the number of mines, and optionally the start position.
-/// Returns `None` if the input is invalid.
-pub fn build_cell_contents_from_base64(base64: &str) -> Option<Base64Pack> {
-    let decoded = Base64.decode(base64).ok()?;
-
-    if decoded.is_empty() {
-        return None;
-    }
-
-    let mut pos = 0;
-    let byte_width = (decoded[0] & 0b0000_0111) as usize + 1;
-    let has_start_pos = (decoded[0] & 0b0000_1000) != 0;
-    pos += 1;
-
-    if decoded.len() < 1 + if has_start_pos { 4 } else { 2 } + 1 {
-        return None;
-    }
-
-    let mut width_bytes = [0; std::mem::size_of::<usize>()];
-    width_bytes[..byte_width].copy_from_slice(&decoded[pos..pos + byte_width]);
-    let width = usize::from_le_bytes(width_bytes);
-    pos += byte_width;
-
-    let mut height_bytes = [0; std::mem::size_of::<usize>()];
-    height_bytes[..byte_width].copy_from_slice(&decoded[pos..pos + byte_width]);
-    let height = usize::from_le_bytes(height_bytes);
-    pos += byte_width;
-
-    if width == 0 || height == 0 {
-        return None;
-    }
-
-    let mut mines = 0;
-    let mut cell_contents = Vec2D::new(width, height);
-    let mut start_position = None;
-
-    if has_start_pos {
-        let mut sx_bytes = [0; std::mem::size_of::<usize>()];
-        sx_bytes[..byte_width].copy_from_slice(&decoded[pos..pos + byte_width]);
-        let sx = usize::from_le_bytes(sx_bytes);
-        pos += byte_width;
-
-        let mut sy_bytes = [0; std::mem::size_of::<usize>()];
-        sy_bytes[..byte_width].copy_from_slice(&decoded[pos..pos + byte_width]);
-        let sy = usize::from_le_bytes(sy_bytes);
-        pos += byte_width;
-
-        start_position = Some((sx, sy));
-    }
-
-    for (i, cell_group) in decoded[pos..]
-        .iter()
-        .flat_map(|&b| (0..8).map(move |i| ((b >> i) & 1) != 0))
-        .enumerate()
-    {
-        let x = i % width;
-        let y = i / width;
-        if y >= height {
-            break;
-        }
-        if cell_group {
-            cell_contents[(x, y)] = CellContent::Mine;
-            mines += 1;
-        } else {
-            cell_contents[(x, y)] = CellContent::Empty;
-        }
-    }
-
-    build_numbers(&mut cell_contents, mines);
-
-    Some(Base64Pack {
-        cell_contents,
-        mines,
-        start_position,
-    })
-}
-
-pub fn encode_cell_contents_to_base64(cell_contents: &Vec2D<CellContent>, start_pos: Option<(usize, usize)>) -> String {
-    let width = cell_contents.dims().0;
-    let height = cell_contents.dims().1;
-    let byte_width = std::cmp::max(
-        (usize::BITS - width.leading_zeros()).div_ceil(8),
-        (usize::BITS - height.leading_zeros()).div_ceil(8),
-    )
-    .max(1) as usize;
-
-    let mut to_encode =
-        Vec::with_capacity(1 + byte_width * if start_pos.is_some() { 4 } else { 2 } + (width * height).div_ceil(8));
-
-    let first_byte = ((byte_width as u8 - 1) & 0b0000_0111) | if start_pos.is_some() { 0b0000_1000 } else { 0 };
-    to_encode.push(first_byte);
-
-    to_encode.extend_from_slice(&width.to_le_bytes()[..byte_width]);
-    to_encode.extend_from_slice(&height.to_le_bytes()[..byte_width]);
-    if let Some((sx, sy)) = start_pos {
-        to_encode.extend_from_slice(&sx.to_le_bytes()[..byte_width]);
-        to_encode.extend_from_slice(&sy.to_le_bytes()[..byte_width]);
-    }
-
-    let mut byte: u8 = 0;
-    for (i, cell) in cell_contents.iter().enumerate() {
-        let bit = match cell {
-            CellContent::Mine => 1,
-            _ => 0,
-        };
-        byte |= bit << (i % 8);
-        if i % 8 == 7 {
-            to_encode.push(byte);
-            byte = 0;
-        }
-    }
-    if !(width * height).is_multiple_of(8) {
-        to_encode.push(byte);
-    }
-
-    Base64.encode(&to_encode)
 }
 
 pub trait Board {
@@ -498,10 +378,10 @@ impl StandardBoard {
         }
     }
 
-    pub fn import(base64: &str, chord_mode: ChordMode) -> Option<Self> {
-        let Base64Pack {
+    pub fn import(pack: ImportPack, chord_mode: ChordMode) -> Option<Self> {
+        let ImportPack {
             cell_contents, mines, ..
-        } = build_cell_contents_from_base64(base64)?;
+        } = pack;
         let (width, height) = cell_contents.dims();
         Some(Self {
             cell_contents,
