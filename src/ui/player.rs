@@ -102,7 +102,7 @@ impl Player {
             cell_size: 24,
             board: [30, 16, 99],
             show_probabilities: false,
-            solver_admit_flags: true,
+            solver_admit_flags: false,
         };
         let board = Box::new(board::StandardBoard::new(
             config.board[0],
