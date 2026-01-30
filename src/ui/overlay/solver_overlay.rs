@@ -44,7 +44,7 @@ impl SolverOverlay {
             enabled: false,
             solver: Arc::new(solver),
             solver_result: None,
-            solver_admit_flags: true,
+            solver_admit_flags: false,
             game_area,
             board_area,
             viewport,
