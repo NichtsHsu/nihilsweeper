@@ -55,7 +55,7 @@ pub struct Game {
 }
 
 impl Game {
-    pub fn new(board: Box<dyn board::Board>, config: &GlobalConfig, skin: skin::Skin) -> Self {
+    pub fn new(board: Box<dyn board::Board>, cell_size: u32, skin: skin::Skin) -> Self {
         let mut this = Self {
             board,
             game_area: iced::Rectangle::default(),
@@ -67,7 +67,7 @@ impl Game {
             borders: Vec::new(),
             light_paths: Vec::new(),
             shadow_paths: Vec::new(),
-            cell_size: config.cell_size,
+            cell_size,
             foreground_cache: canvas::Cache::new(),
             background_cache: canvas::Cache::new(),
             skin,

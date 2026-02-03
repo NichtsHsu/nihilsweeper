@@ -1,7 +1,7 @@
 use super::Vec2D;
 use rand::{rng, seq::SliceRandom};
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum CellState {
     #[default]
     Closed,
@@ -10,7 +10,7 @@ pub enum CellState {
     Blasted,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum CellContent {
     #[default]
     Empty,
@@ -18,7 +18,7 @@ pub enum CellContent {
     Mine,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum ChordMode {
     #[default]
     Standard,
@@ -99,27 +99,6 @@ impl BoardState {
                 }
             },
             _ => (),
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum EncodeType {
-    Base64,
-    PttUrl,
-    LlamaUrl,
-}
-
-impl EncodeType {
-    pub const ALL: [EncodeType; 3] = [EncodeType::Base64, EncodeType::PttUrl, EncodeType::LlamaUrl];
-}
-
-impl std::fmt::Display for EncodeType {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            EncodeType::Base64 => write!(f, "Base64"),
-            EncodeType::PttUrl => write!(f, "PTT URL"),
-            EncodeType::LlamaUrl => write!(f, "Llama URL"),
         }
     }
 }

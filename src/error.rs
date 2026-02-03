@@ -4,6 +4,8 @@ pub enum Error {
     MissingResource(String),
     SkinNotFound(String),
     FileNotFound(String),
+    TomlSerialize(toml::ser::Error),
+    TomlDeserialize(toml::de::Error),
     Svg(usvg::Error),
     Image(image::ImageError),
     PixmapCreationFailed,
@@ -43,6 +45,18 @@ impl From<crate::engine::solver::error::Error> for Error {
     }
 }
 
+impl From<toml::ser::Error> for Error {
+    fn from(value: toml::ser::Error) -> Self {
+        Error::TomlSerialize(value)
+    }
+}
+
+impl From<toml::de::Error> for Error {
+    fn from(value: toml::de::Error) -> Self {
+        Error::TomlDeserialize(value)
+    }
+}
+
 impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -50,6 +64,8 @@ impl std::fmt::Display for Error {
             Self::MissingResource(resource) => write!(f, "missing resource: {resource}"),
             Self::SkinNotFound(skin) => write!(f, "invalid skin: {skin}"),
             Self::FileNotFound(file) => write!(f, "file not found: {file}"),
+            Self::TomlSerialize(e) => write!(f, "TOML serialization error: {e}"),
+            Self::TomlDeserialize(e) => write!(f, "TOML deserialization error: {e}"),
             Self::Svg(e) => write!(f, "SVG error: {e}"),
             Self::Image(e) => write!(f, "image error: {e}"),
             Self::PixmapCreationFailed => write!(f, "failed to create pixmap"),
@@ -66,6 +82,8 @@ impl std::error::Error for Error {
             Self::MissingResource(_) => None,
             Self::SkinNotFound(_) => None,
             Self::FileNotFound(_) => None,
+            Self::TomlSerialize(e) => e.source(),
+            Self::TomlDeserialize(e) => e.source(),
             Self::Svg(e) => e.source(),
             Self::Image(e) => e.source(),
             Self::PixmapCreationFailed => None,

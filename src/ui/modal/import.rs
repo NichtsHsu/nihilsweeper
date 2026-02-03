@@ -1,16 +1,16 @@
-use crate::base::board::EncodeType;
+use crate::base::encode_decode::EncodeType;
 
 #[derive(Clone, Debug)]
 pub enum ImportMessage {
     TypeSelected(EncodeType),
-    TextChanged(String),
+    TextEdit(iced::widget::text_editor::Action),
     Confirm,
     Cancel,
 }
 
 #[derive(Clone, Debug)]
 pub struct ImportConfig {
-    pub text: String,
+    pub text: iced::widget::text_editor::Content,
     pub import_type: EncodeType,
 }
 
@@ -23,10 +23,10 @@ impl ImportModal {
     pub fn new() -> Self {
         Self {
             config: ImportConfig {
-                text: String::new(),
+                text: iced::widget::text_editor::Content::new(),
                 import_type: EncodeType::Base64,
             },
-            import_type_selector: iced::widget::combo_box::State::new(EncodeType::ALL.to_vec()),
+            import_type_selector: iced::widget::combo_box::State::new(EncodeType::DECODE_TYPES.to_vec()),
         }
     }
 
@@ -35,10 +35,10 @@ impl ImportModal {
             ImportMessage::TypeSelected(import_type) => {
                 self.config.import_type = import_type;
             },
-            ImportMessage::TextChanged(text) => {
-                self.config.text = text;
+            ImportMessage::TextEdit(action) => {
+                self.config.text.perform(action);
             },
-            _ => self.config.text.clear(),
+            _ => _ = std::mem::take(&mut self.config.text),
         }
     }
 
@@ -55,9 +55,9 @@ impl ImportModal {
                     )
                 ]
                 .spacing(10),
-                iced::widget::text_input("Please input here...", &self.config.text)
-                    .on_input(ImportMessage::TextChanged)
-                    .on_submit(ImportMessage::Confirm)
+                iced::widget::text_editor(&self.config.text)
+                    .on_action(ImportMessage::TextEdit)
+                    .font(iced::Font::MONOSPACE)
                     .padding(10),
                 iced::widget::row![
                     iced::widget::button(iced::widget::text("Confirm"))
@@ -71,7 +71,7 @@ impl ImportModal {
             ]
             .spacing(15),
         )
-        .width(400)
+        .width(600)
         .padding(20)
         .style(iced::widget::container::rounded_box)
         .into()

@@ -1,4 +1,4 @@
-use crate::base::board::EncodeType;
+use crate::base::encode_decode::EncodeType;
 
 #[derive(Clone, Debug)]
 pub struct ExportConfig {
@@ -23,7 +23,7 @@ impl ExportModal {
             config: ExportConfig {
                 export_type: EncodeType::Base64,
             },
-            export_type_selector: iced::widget::combo_box::State::new(EncodeType::ALL.to_vec()),
+            export_type_selector: iced::widget::combo_box::State::new(EncodeType::ENCODE_TYPES.to_vec()),
         }
     }
 
@@ -58,7 +58,7 @@ impl ExportModal {
             ]
             .spacing(15),
         )
-        .width(400)
+        .width(600)
         .padding(20)
         .style(iced::widget::container::rounded_box)
         .into()

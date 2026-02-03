@@ -1,3 +1,151 @@
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EncodeType {
+    Ascii,
+    AsciiWithNumbers,
+    Base64,
+    PttUrl,
+    LlamaUrl,
+}
+
+impl EncodeType {
+    pub const ENCODE_TYPES: [EncodeType; 5] = [
+        EncodeType::Ascii,
+        EncodeType::AsciiWithNumbers,
+        EncodeType::Base64,
+        EncodeType::PttUrl,
+        EncodeType::LlamaUrl,
+    ];
+
+    pub const DECODE_TYPES: [EncodeType; 4] = [
+        EncodeType::Ascii,
+        EncodeType::Base64,
+        EncodeType::PttUrl,
+        EncodeType::LlamaUrl,
+    ];
+}
+
+impl std::fmt::Display for EncodeType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            EncodeType::Ascii => write!(f, "ASCII"),
+            EncodeType::AsciiWithNumbers => write!(f, "ASCII (with Numbers)"),
+            EncodeType::Base64 => write!(f, "Base64"),
+            EncodeType::PttUrl => write!(f, "PTT URL"),
+            EncodeType::LlamaUrl => write!(f, "Llama URL"),
+        }
+    }
+}
+
+pub mod ascii {
+    use crate::base::{board::*, *};
+    use log::error;
+
+    pub fn decode(ascii: &str) -> Option<ImportPack> {
+        let lines: Vec<&str> = ascii.lines().collect();
+        let height = lines.len();
+        if height == 0 {
+            error!("ASCII input has no lines");
+            return None;
+        }
+        let width = lines[0].chars().count();
+        if width == 0 {
+            error!("ASCII input has no width");
+            return None;
+        }
+
+        let mut cell_contents = Vec2D::new(width, height);
+        let mut mines = 0;
+        let mut start_position = None;
+
+        for (y, line) in lines.iter().enumerate() {
+            if line.chars().count() != width {
+                error!("Inconsistent line width in ASCII input");
+                return None;
+            }
+            for (x, c) in line.chars().enumerate() {
+                match c {
+                    '*' | 'x' | 'X' => {
+                        cell_contents[(x, y)] = CellContent::Mine;
+                        mines += 1;
+                    },
+                    '.' | ' ' | '1'..='8' => {
+                        cell_contents[(x, y)] = CellContent::Empty;
+                    },
+                    '@' => {
+                        cell_contents[(x, y)] = CellContent::Empty;
+                        start_position = Some((x, y));
+                    },
+                    _ => {
+                        error!("Invalid character in ASCII input: {}", c);
+                        return None;
+                    },
+                }
+            }
+        }
+
+        build_numbers(&mut cell_contents, mines);
+
+        Some(ImportPack {
+            cell_contents,
+            mines,
+            start_position,
+        })
+    }
+
+    pub fn encode(cell_contents: &Vec2D<CellContent>, start_position: Option<(usize, usize)>) -> String {
+        let (width, height) = cell_contents.dims();
+        let mut ascii = String::with_capacity(width * height + height - 1);
+
+        for y in 0..height {
+            for x in 0..width {
+                if let Some((sx, sy)) = start_position
+                    && (x, y) == (sx, sy)
+                {
+                    ascii.push('@');
+                    continue;
+                }
+                let c = match cell_contents[(x, y)] {
+                    CellContent::Mine => 'X',
+                    _ => '.',
+                };
+                ascii.push(c);
+            }
+            if y < height - 1 {
+                ascii.push('\n');
+            }
+        }
+
+        ascii
+    }
+
+    pub fn encode_with_numbers(cell_contents: &Vec2D<CellContent>, start_position: Option<(usize, usize)>) -> String {
+        let (width, height) = cell_contents.dims();
+        let mut ascii = String::with_capacity(width * height + height - 1);
+
+        for y in 0..height {
+            for x in 0..width {
+                if let Some((sx, sy)) = start_position
+                    && (x, y) == (sx, sy)
+                {
+                    ascii.push('@');
+                    continue;
+                }
+                let c = match cell_contents[(x, y)] {
+                    CellContent::Mine => 'X',
+                    CellContent::Number(n) => char::from_digit(n as u32, 10).unwrap(),
+                    CellContent::Empty => '.',
+                };
+                ascii.push(c);
+            }
+            if y < height - 1 {
+                ascii.push('\n');
+            }
+        }
+
+        ascii
+    }
+}
+
 pub mod base64 {
     use crate::base::{board::*, *};
     use base64::{Engine as _, engine::general_purpose::STANDARD_NO_PAD as Base64};

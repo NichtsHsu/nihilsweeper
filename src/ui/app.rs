@@ -1,9 +1,13 @@
 use iced::Task;
-use log::warn;
+use log::{debug, trace, warn};
 
-use crate::ui::{
-    player::{Player, PlayerMessage},
-    *,
+use crate::{
+    base::*,
+    config::*,
+    ui::{
+        player::{Player, PlayerMessage},
+        *,
+    },
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -16,9 +20,11 @@ pub enum BaseWindow {
 pub enum AppMessage {
     Modal(modal::ModalMessage),
     Player(player::PlayerMessage),
+    CloseWindow,
 }
 
 pub struct App {
+    config: GlobalConfig,
     base_window: BaseWindow,
     current_modal: modal::Modal,
     player: player::Player,
@@ -29,10 +35,21 @@ pub struct App {
 
 impl App {
     pub fn new() -> Self {
+        let config = GlobalConfig::load().unwrap_or_else(|err| {
+            warn!("Failed to load config, using default config.");
+            GlobalConfig {
+                chord_mode: board::ChordMode::LeftClick,
+                skin: "WoM Light".to_string(),
+                cell_size: 24,
+                board: [30, 16, 99],
+            }
+        });
+        let player = Player::new(config.clone());
         Self {
+            config,
             base_window: BaseWindow::default(),
             current_modal: modal::Modal::default(),
-            player: player::Player::new(),
+            player,
             export: modal::export::ExportModal::new(),
             import: modal::import::ImportModal::new(),
             error: modal::error::ErrorModal::new(),
@@ -70,13 +87,20 @@ impl App {
 
     pub fn update(&mut self, msg: AppMessage) -> Task<AppMessage> {
         match msg {
+            AppMessage::Player(PlayerMessage::SyncConfigToApp(config)) => {
+                trace!("Applying config update: {:?}", config);
+                config.apply_to(&mut self.config);
+            },
             AppMessage::Player(PlayerMessage::ShowImportModal) => {
+                debug!("Showing import modal");
                 self.current_modal = modal::Modal::ImportGame;
             },
             AppMessage::Player(PlayerMessage::ShowExportModal) => {
+                debug!("Showing export modal");
                 self.current_modal = modal::Modal::ExportGame;
             },
             AppMessage::Player(PlayerMessage::ShowErrorModal(err)) => {
+                debug!("Showing error modal: {}", err);
                 self.error.error_message = err;
                 self.current_modal = modal::Modal::Error;
             },
@@ -84,6 +108,7 @@ impl App {
             AppMessage::Modal(modal::ModalMessage::Import(modal::import::ImportMessage::Cancel))
             | AppMessage::Modal(modal::ModalMessage::Export(modal::export::ExportMessage::Cancel))
             | AppMessage::Modal(modal::ModalMessage::Error(modal::error::ErrorMessage::Acknowledge)) => {
+                debug!("Closing modal: {:?}", self.current_modal);
                 self.current_modal = modal::Modal::None;
             },
             AppMessage::Modal(modal::ModalMessage::Import(msg)) => {
@@ -96,7 +121,7 @@ impl App {
                         .player
                         .update(PlayerMessage::Import(player::ImportMessage::StartImport(
                             import_type,
-                            text,
+                            text.text(),
                         )))
                         .map(AppMessage::Player);
                 }
@@ -113,6 +138,11 @@ impl App {
                         .map(AppMessage::Player);
                 }
                 self.export.update(msg);
+            },
+            AppMessage::CloseWindow => {
+                trace!("Saving config on exit: {:?}", self.config);
+                _ = self.config.save();
+                return iced::exit();
             },
         }
         Task::none()
@@ -153,6 +183,8 @@ impl App {
     }
 
     pub fn subscriptions(&self) -> iced::Subscription<AppMessage> {
-        self.player.subscriptions().map(AppMessage::Player)
+        let close = iced::window::close_requests().map(|_| AppMessage::CloseWindow);
+        let player = self.player.subscriptions().map(AppMessage::Player);
+        iced::Subscription::batch([close, player])
     }
 }

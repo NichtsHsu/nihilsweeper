@@ -1,4 +1,4 @@
-use crate::base::board::EncodeType;
+use crate::base::encode_decode::EncodeType;
 
 #[derive(Clone, Debug)]
 pub enum ErrorMessage {

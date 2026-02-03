@@ -1,6 +1,6 @@
+pub mod error;
 pub mod export;
 pub mod import;
-pub mod error;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Modal {
@@ -10,7 +10,6 @@ pub enum Modal {
     ExportGame,
     Error,
 }
-
 
 #[derive(Debug, Clone)]
 pub enum ModalMessage {

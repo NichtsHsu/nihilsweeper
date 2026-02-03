@@ -169,7 +169,7 @@ mod build {
                 let opt = usvg::Options::default();
                 let tree = usvg::Tree::from_data(&svg_bytes, &opt)
                     .inspect_err(|e| error!("Failed to parse SVG file {}: {}", path.to_string_lossy(), e))?;
-                let mut pixmap = tiny_skia::Pixmap::new(width, height).ok_or_else(|| {
+                let mut pixmap = resvg::tiny_skia::Pixmap::new(width, height).ok_or_else(|| {
                     error!(
                         "Failed to create pixmap for SVG file {} with size {}x{}",
                         path.to_string_lossy(),
@@ -186,7 +186,7 @@ mod build {
 
                 resvg::render(
                     &tree,
-                    tiny_skia::Transform::from_scale(scale_w, scale_h),
+                    resvg::tiny_skia::Transform::from_scale(scale_w, scale_h),
                     &mut pixmap.as_mut(),
                 );
 
