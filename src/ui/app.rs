@@ -88,7 +88,7 @@ impl App {
     pub fn update(&mut self, msg: AppMessage) -> Task<AppMessage> {
         match msg {
             AppMessage::Player(PlayerMessage::SyncConfigToApp(config)) => {
-                trace!("Applying config update: {:?}", config);
+                debug!("Applying config update: {:?}", config);
                 config.apply_to(&mut self.config);
             },
             AppMessage::Player(PlayerMessage::ShowImportModal) => {
@@ -140,7 +140,7 @@ impl App {
                 self.export.update(msg);
             },
             AppMessage::CloseWindow => {
-                trace!("Saving config on exit: {:?}", self.config);
+                debug!("Saving config on exit: {:?}", self.config);
                 _ = self.config.save();
                 return iced::exit();
             },

@@ -203,11 +203,11 @@ impl Player {
             && let Some(game) = &self.game
         {
             if self.update_solver_in_progress {
-                trace!("Solver update already in progress, scheduling another update");
+                debug!("Solver update already in progress, scheduling another update");
                 self.update_solver_scheduled = true;
                 return None;
             }
-            trace!("Starting solver update");
+            debug!("Starting solver update");
             self.update_solver_in_progress = true;
             return Some(
                 self.solver_overlay
@@ -359,7 +359,7 @@ impl Player {
                         board::ChordMode::Standard
                     };
                     self.config_update.chord_mode(self.config.chord_mode);
-                    trace!("Chord mode toggled: {:?}", self.config.chord_mode);
+                    debug!("Chord mode toggled: {:?}", self.config.chord_mode);
                     if let Some(game) = &mut self.game {
                         game.update(game::GameMessage::ChordModeChanged(self.config.chord_mode));
                     }
@@ -405,7 +405,7 @@ impl Player {
                         self.solver_overlay.update(msg);
                         self.update_solver_in_progress = false;
                         if self.update_solver_scheduled {
-                            trace!("Running scheduled solver update");
+                            debug!("Running scheduled solver update");
                             self.update_solver_scheduled = false;
                             if let Some(task) = self.update_solver() {
                                 tasks.push(task);
@@ -449,13 +449,14 @@ impl Player {
                     ImportMessage::ImportCompleted => {
                         debug!("Import completed, retrieving board");
                         let mut board = self.board_to_import.blocking_lock().take();
-                        trace!("Retrieved board from import: {}", board.is_some());
+                        debug!("Retrieved board from import: {}", board.is_some());
                         match board {
                             Some(board) => {
                                 if let Some(task) = self.new_game(board) {
                                     tasks.push(task);
                                 }
                                 if self.game.is_some() {
+                                    info!("Board imported successfully");
                                     self.import_button_state = ImportButtonState::Completed { remaining_secs: 3 };
                                 } else {
                                     error!("Failed to import board: invalid skin");
@@ -520,6 +521,7 @@ impl Player {
                         }
                     },
                     ExportMessage::ExportCompleted(data) => {
+                        info!("Board exported successfully to clipboard");
                         debug!("Export completed, copying data to clipboard: {}", data);
                         tasks.push(iced::clipboard::write(data));
                         self.export_button_state = ExportButtonState::Copied { remaining_secs: 3 };

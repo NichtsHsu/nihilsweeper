@@ -92,7 +92,7 @@ impl SolverOverlay {
     pub fn update(&mut self, message: SolverOverlayMessage) {
         match message {
             SolverOverlayMessage::SolverCompleted(result) => {
-                trace!("Solver completed, updating overlay");
+                debug!("Solver completed, updating overlay");
                 self.solver_result = result.inspect_err(|e| error!("Solver error: {:?}", e)).ok();
                 self.cache.clear();
             },
