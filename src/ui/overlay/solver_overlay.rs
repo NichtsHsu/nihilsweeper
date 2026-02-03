@@ -3,7 +3,7 @@ use crate::{
     engine::solver::{self, BoardSafety, Solver},
 };
 use iced::widget::canvas;
-use log::{error, trace};
+use log::{debug, error, trace};
 use std::sync::Arc;
 
 #[derive(Debug, Clone)]

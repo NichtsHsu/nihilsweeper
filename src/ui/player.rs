@@ -5,7 +5,7 @@ use crate::{
     ui::*,
 };
 use iced::{Function, Task};
-use log::{debug, error, trace};
+use log::{debug, error, info, trace};
 use std::{ops::Not, sync::Arc};
 use tokio::sync::Mutex;
 
