@@ -1,5 +1,5 @@
 use iced::Task;
-use log::{debug, trace, warn};
+use log::{debug, info, trace, warn};
 
 use crate::{
     base::*,

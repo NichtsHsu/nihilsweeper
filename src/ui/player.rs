@@ -169,6 +169,12 @@ impl Player {
     }
 
     fn new_game(&mut self, board: Box<dyn board::Board>) -> Option<iced::Task<PlayerMessage>> {
+        info!(
+            "Creating new game board: {}x{} with {} mines",
+            board.width(),
+            board.height(),
+            board.mines()
+        );
         self.game = self
             .skin
             .clone()
@@ -246,7 +252,7 @@ impl Player {
                             .as_ref()
                             .map(|game| [game.board().width(), game.board().height(), game.board().mines()]);
                         if Some(self.config.board) != current_board {
-                            debug!("Board configuration changed, recreating the board");
+                            info!("Board configuration changed, recreating the board");
                             let task = self.new_game(Box::new(board::StandardBoard::new(
                                 self.config.board[0],
                                 self.config.board[1],
@@ -338,6 +344,7 @@ impl Player {
                                 .ok()
                         });
                     if let Some(skin) = skin {
+                        info!("Skin applied: {}", self.config.skin);
                         self.skin = Some(skin.clone());
                     }
 
@@ -522,7 +529,7 @@ impl Player {
                     },
                     ExportMessage::ExportCompleted(data) => {
                         info!("Board exported successfully to clipboard");
-                        debug!("Export completed, copying data to clipboard: {}", data);
+                        trace!("Export completed, copying data to clipboard: {}", data);
                         tasks.push(iced::clipboard::write(data));
                         self.export_button_state = ExportButtonState::Copied { remaining_secs: 3 };
                     },
