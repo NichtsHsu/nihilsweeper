@@ -442,20 +442,25 @@ impl Game {
     }
 
     pub fn update(&mut self, message: GameMessage) -> bool {
+        trace!("GameMessage received: {:?}", message);
         match message {
             GameMessage::Board(board_msg) => {
+                trace!("BoardMessage received: {:?}", board_msg);
                 if self.board.state().is_end() {
                     debug!("Board is in end state ({:?}), ignoring input", self.board.state());
                     return false;
                 }
                 match board_msg {
                     BoardMessage::Left { x, y } => {
+                        trace!("Left click at ({}, {})", x, y);
                         self.board.left_click(x, y);
                     },
                     BoardMessage::Right { x, y } => {
+                        trace!("Right click at ({}, {})", x, y);
                         self.board.right_click(x, y);
                     },
                     BoardMessage::Chord { x, y, is_left } => {
+                        trace!("Chord click at ({}, {}), is_left: {}", x, y, is_left);
                         self.board.chord_click(x, y, is_left);
                     },
                 }
@@ -469,6 +474,7 @@ impl Game {
                 return true;
             },
             GameMessage::PressedPositionChanged => {
+                trace!("PressedPositionChanged");
                 self.foreground_cache.clear();
             },
             GameMessage::ChordModeChanged(mode) => {
@@ -539,25 +545,25 @@ impl canvas::Program<GameMessage> for Game {
                         match state {
                             MouseState::Idle => {
                                 *state = MouseState::LeftDown(position);
-                                debug!("State changed from Idle to LeftDown");
+                                trace!("State changed from Idle to LeftDown");
                                 trace!("Publishing PressedPositionChanged");
                                 Some(canvas::Action::publish(GameMessage::PressedPositionChanged).and_capture())
                             },
                             MouseState::LeftDown { .. } => {
                                 *state = MouseState::LeftDown(position);
-                                debug!("State changed from LeftDown to LeftDown, maybe lost focus?");
+                                trace!("State changed from LeftDown to LeftDown, maybe lost focus?");
                                 trace!("Publishing PressedPositionChanged");
                                 Some(canvas::Action::publish(GameMessage::PressedPositionChanged).and_capture())
                             },
                             MouseState::RightDown => {
                                 *state = MouseState::BothDown(position);
-                                debug!("State changed from RightDown to BothDown");
+                                trace!("State changed from RightDown to BothDown");
                                 trace!("Publishing PressedPositionChanged");
                                 Some(canvas::Action::publish(GameMessage::PressedPositionChanged).and_capture())
                             },
                             MouseState::BothDown { .. } => {
                                 *state = MouseState::LeftDown(position);
-                                debug!("State changed from BothDown to LeftDown, maybe lost focus?");
+                                trace!("State changed from BothDown to LeftDown, maybe lost focus?");
                                 trace!("Publishing PressedPositionChanged");
                                 Some(canvas::Action::publish(GameMessage::PressedPositionChanged).and_capture())
                             },
@@ -572,7 +578,7 @@ impl canvas::Program<GameMessage> for Game {
                         match state {
                             MouseState::Idle => {
                                 *state = MouseState::RightDown;
-                                debug!("State changed from Idle to RightDown");
+                                trace!("State changed from Idle to RightDown");
                                 position.and_then(|(x, y)| {
                                     if x < self.board.width() && y < self.board.height() {
                                         trace!("Publishing Right click at ({}, {})", x, y);
@@ -588,12 +594,12 @@ impl canvas::Program<GameMessage> for Game {
                             },
                             MouseState::LeftDown { .. } => {
                                 *state = MouseState::BothDown(position);
-                                debug!("State changed from LeftDown to BothDown");
+                                trace!("State changed from LeftDown to BothDown");
                                 trace!("Publishing PressedPositionChanged");
                                 Some(canvas::Action::publish(GameMessage::PressedPositionChanged).and_capture())
                             },
                             MouseState::RightDown => {
-                                debug!("State changed from RightDown to RightDown, maybe lost focus?");
+                                trace!("State changed from RightDown to RightDown, maybe lost focus?");
                                 position.and_then(|(x, y)| {
                                     if x < self.board.width() && y < self.board.height() {
                                         trace!("Publishing Right click at ({}, {})", x, y);
@@ -609,7 +615,7 @@ impl canvas::Program<GameMessage> for Game {
                             },
                             MouseState::BothDown { .. } => {
                                 *state = MouseState::RightDown;
-                                debug!("State changed from BothDown to RightDown, maybe lost focus?");
+                                trace!("State changed from BothDown to RightDown, maybe lost focus?");
                                 position.and_then(|(x, y)| {
                                     if x < self.board.width() && y < self.board.height() {
                                         trace!("Publishing Right click at ({}, {})", x, y);
@@ -634,7 +640,7 @@ impl canvas::Program<GameMessage> for Game {
                         match state {
                             MouseState::LeftDown { .. } => {
                                 *state = MouseState::Idle;
-                                debug!("State changed from LeftDown to Idle");
+                                trace!("State changed from LeftDown to Idle");
                                 position.and_then(|(x, y)| {
                                     if x < self.board.width() && y < self.board.height() {
                                         trace!("Publishing Left click at ({}, {})", x, y);
@@ -656,7 +662,7 @@ impl canvas::Program<GameMessage> for Game {
                             },
                             MouseState::BothDown { .. } => {
                                 *state = MouseState::RightDown;
-                                debug!("State changed from BothDown to RightDown");
+                                trace!("State changed from BothDown to RightDown");
                                 position.and_then(|(x, y)| {
                                     if x < self.board.width() && y < self.board.height() {
                                         trace!("Publishing Chord click at ({}, {})", x, y);
@@ -681,7 +687,7 @@ impl canvas::Program<GameMessage> for Game {
                                 })
                             },
                             _ => {
-                                debug!("Left button released but not pressed before, maybe lost focus?");
+                                trace!("Left button released but not pressed before, maybe lost focus?");
                                 None
                             },
                         }
@@ -695,12 +701,12 @@ impl canvas::Program<GameMessage> for Game {
                         match state {
                             MouseState::RightDown => {
                                 *state = MouseState::Idle;
-                                debug!("State changed from RightDown to Idle");
+                                trace!("State changed from RightDown to Idle");
                                 None
                             },
                             MouseState::BothDown { .. } => {
                                 *state = MouseState::LeftDown(position);
-                                debug!("State changed from BothDown to LeftDown");
+                                trace!("State changed from BothDown to LeftDown");
                                 position.and_then(|(x, y)| {
                                     if x < self.board.width() && y < self.board.height() {
                                         trace!("Publishing Chord click at ({}, {})", x, y);
@@ -719,7 +725,7 @@ impl canvas::Program<GameMessage> for Game {
                                 })
                             },
                             _ => {
-                                debug!("Right button released but not pressed before, maybe lost focus?");
+                                trace!("Right button released but not pressed before, maybe lost focus?");
                                 None
                             },
                         }
@@ -750,8 +756,7 @@ impl canvas::Program<GameMessage> for Game {
                 key: iced::keyboard::Key::Named(iced::keyboard::key::Named::Space),
                 ..
             }) => {
-                trace!("Space key released");
-                trace!("Publishing FaceClicked");
+                trace!("Space key released, publishing FaceClicked");
                 Some(canvas::Action::publish(GameMessage::FaceClicked).and_capture())
             },
             _ => None,

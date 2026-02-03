@@ -1,5 +1,5 @@
 use super::Vec2D;
-use log::info;
+use log::{debug, info};
 use rand::{rng, seq::SliceRandom};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -261,11 +261,12 @@ impl StandardBoard {
         if self.state != BoardState::NotStarted {
             return;
         }
-        info!(
-            "Starting new game: {}x{} with {} mines",
+        debug!(
+            "Initializing new game: {}x{} with {} mines, start click at {:?}",
             self.cell_contents.dims().0,
             self.cell_contents.dims().1,
-            self.mines
+            self.mines,
+            click_position
         );
         let mut rng = rng();
         self.cell_contents.data_mut()[..self.mines]

@@ -90,6 +90,7 @@ impl SolverOverlay {
     }
 
     pub fn update(&mut self, message: SolverOverlayMessage) {
+        trace!("SolverOverlayMessage received: {:?}", message);
         match message {
             SolverOverlayMessage::SolverCompleted(result) => {
                 debug!("Solver completed, updating overlay");
@@ -101,22 +102,26 @@ impl SolverOverlay {
                 game_area,
                 board_area,
             } => {
+                trace!("Solver overlay resize: cell_size={}", cell_size);
                 self.cell_size = cell_size;
                 self.game_area = game_area;
                 self.board_area = board_area;
                 self.cache.clear();
             },
             SolverOverlayMessage::SetEnabled(enabled) => {
+                trace!("Solver overlay enabled: {}", enabled);
                 self.enabled = enabled;
                 if !enabled {
                     self.clear_solver();
                 }
             },
             SolverOverlayMessage::SetAdmitFlags(admit_flags) => {
+                trace!("Solver admit flags: {}", admit_flags);
                 self.solver_admit_flags = admit_flags;
                 self.clear_solver();
             },
             SolverOverlayMessage::SetLightSkin(light_skin) => {
+                trace!("Solver light skin: {}", light_skin);
                 self.light_skin = light_skin;
                 self.cache.clear();
             },
