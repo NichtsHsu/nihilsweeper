@@ -10,6 +10,8 @@ use crate::{
     },
 };
 
+use iced::futures::StreamExt;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum BaseWindow {
     #[default]
@@ -21,6 +23,7 @@ pub enum AppMessage {
     Modal(modal::ModalMessage),
     Player(player::PlayerMessage),
     CloseWindow,
+    ActivateWindow,
 }
 
 pub struct App {
@@ -88,6 +91,11 @@ impl App {
     pub fn update(&mut self, msg: AppMessage) -> Task<AppMessage> {
         trace!("AppMessage received: {:?}", msg);
         match msg {
+            AppMessage::ActivateWindow => {
+                info!("Activating window due to second instance launch");
+                // Use the unique() method to get the main window ID
+                return iced::window::gain_focus(iced::window::Id::unique());
+            },
             AppMessage::Player(PlayerMessage::SyncConfigToApp(config)) => {
                 debug!("Applying config update: {:?}", config);
                 config.apply_to(&mut self.config);
@@ -190,6 +198,7 @@ impl App {
     pub fn subscriptions(&self) -> iced::Subscription<AppMessage> {
         let close = iced::window::close_requests().map(|_| AppMessage::CloseWindow);
         let player = self.player.subscriptions().map(AppMessage::Player);
-        iced::Subscription::batch([close, player])
+        let activation = crate::single_instance::activation_subscription();
+        iced::Subscription::batch([close, player, activation])
     }
 }
