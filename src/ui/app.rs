@@ -1,5 +1,5 @@
 use iced::Task;
-use log::{debug, trace, warn};
+use log::{debug, info, trace, warn};
 
 use crate::{
     base::*,
@@ -86,9 +86,10 @@ impl App {
     }
 
     pub fn update(&mut self, msg: AppMessage) -> Task<AppMessage> {
+        trace!("AppMessage received: {:?}", msg);
         match msg {
             AppMessage::Player(PlayerMessage::SyncConfigToApp(config)) => {
-                trace!("Applying config update: {:?}", config);
+                debug!("Applying config update: {:?}", config);
                 config.apply_to(&mut self.config);
             },
             AppMessage::Player(PlayerMessage::ShowImportModal) => {
@@ -112,7 +113,9 @@ impl App {
                 self.current_modal = modal::Modal::None;
             },
             AppMessage::Modal(modal::ModalMessage::Import(msg)) => {
+                trace!("Handling import modal message: {:?}", msg);
                 if let modal::import::ImportMessage::Confirm = msg {
+                    debug!("Import modal confirmed");
                     self.current_modal = modal::Modal::None;
                     let import_type = self.import.config.import_type;
                     let text = std::mem::take(&mut self.import.config.text);
@@ -128,7 +131,9 @@ impl App {
                 self.import.update(msg);
             },
             AppMessage::Modal(modal::ModalMessage::Export(msg)) => {
+                trace!("Handling export modal message: {:?}", msg);
                 if let modal::export::ExportMessage::Confirm = msg {
+                    debug!("Export modal confirmed");
                     self.current_modal = modal::Modal::None;
                     let export_type = self.export.config.export_type;
                     self.export.update(msg);
@@ -140,7 +145,7 @@ impl App {
                 self.export.update(msg);
             },
             AppMessage::CloseWindow => {
-                trace!("Saving config on exit: {:?}", self.config);
+                debug!("Saving config on exit: {:?}", self.config);
                 _ = self.config.save();
                 return iced::exit();
             },

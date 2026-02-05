@@ -442,20 +442,25 @@ impl Game {
     }
 
     pub fn update(&mut self, message: GameMessage) -> bool {
+        trace!("GameMessage received: {:?}", message);
         match message {
             GameMessage::Board(board_msg) => {
+                trace!("BoardMessage received: {:?}", board_msg);
                 if self.board.state().is_end() {
-                    trace!("Board is in end state ({:?}), ignoring input", self.board.state());
+                    debug!("Board is in end state ({:?}), ignoring input", self.board.state());
                     return false;
                 }
                 match board_msg {
                     BoardMessage::Left { x, y } => {
+                        trace!("Left click at ({}, {})", x, y);
                         self.board.left_click(x, y);
                     },
                     BoardMessage::Right { x, y } => {
+                        trace!("Right click at ({}, {})", x, y);
                         self.board.right_click(x, y);
                     },
                     BoardMessage::Chord { x, y, is_left } => {
+                        trace!("Chord click at ({}, {}), is_left: {}", x, y, is_left);
                         self.board.chord_click(x, y, is_left);
                     },
                 }
@@ -469,6 +474,7 @@ impl Game {
                 return true;
             },
             GameMessage::PressedPositionChanged => {
+                trace!("PressedPositionChanged");
                 self.foreground_cache.clear();
             },
             GameMessage::ChordModeChanged(mode) => {
@@ -750,8 +756,7 @@ impl canvas::Program<GameMessage> for Game {
                 key: iced::keyboard::Key::Named(iced::keyboard::key::Named::Space),
                 ..
             }) => {
-                trace!("Space key released");
-                trace!("Publishing FaceClicked");
+                trace!("Space key released, publishing FaceClicked");
                 Some(canvas::Action::publish(GameMessage::FaceClicked).and_capture())
             },
             _ => None,

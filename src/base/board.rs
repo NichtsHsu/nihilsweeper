@@ -1,4 +1,5 @@
 use super::Vec2D;
+use log::{debug, info};
 use rand::{rng, seq::SliceRandom};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -79,6 +80,7 @@ impl BoardState {
             && *opened_cells + mines == size
         {
             *self = BoardState::Won;
+            info!("Game won! All cells opened successfully");
         }
     }
 
@@ -90,13 +92,15 @@ impl BoardState {
                     flags: *flags,
                     blasted_cell: (x, y),
                 };
+                info!("Game lost! Mine exploded at ({}, {})", x, y);
             },
             BoardState::NotStarted => {
                 *self = BoardState::Lost {
                     opened_cells: 0,
                     flags: 0,
                     blasted_cell: (x, y),
-                }
+                };
+                info!("Game lost! Mine exploded at ({}, {}) on first click", x, y);
             },
             _ => (),
         }
@@ -257,6 +261,13 @@ impl StandardBoard {
         if self.state != BoardState::NotStarted {
             return;
         }
+        debug!(
+            "Initializing new game: {}x{} with {} mines, start click at {:?}",
+            self.cell_contents.dims().0,
+            self.cell_contents.dims().1,
+            self.mines,
+            click_position
+        );
         let mut rng = rng();
         self.cell_contents.data_mut()[..self.mines]
             .iter_mut()
@@ -510,12 +521,14 @@ impl Board for StandardBoard {
     }
 
     fn reset(&mut self) {
+        info!("Board reset");
         self.state = BoardState::NotStarted;
         self.cell_states.fill(CellState::Closed);
         self.cell_contents.fill(CellContent::Empty);
     }
 
     fn replay(&mut self) {
+        info!("Replaying current game");
         self.cell_states.fill(CellState::Closed);
         self.state = BoardState::InProgress {
             opened_cells: 0,
@@ -530,6 +543,7 @@ impl Board for StandardBoard {
             blasted_cell: (x, y),
         } = self.state
         {
+            info!("Resuming game after loss");
             if let Some(cell_state) = self.cell_states.get_mut(x, y) {
                 *cell_state = CellState::Closed;
             }

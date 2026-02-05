@@ -5,7 +5,7 @@ use crate::{
     ui::*,
 };
 use iced::{Function, Task};
-use log::{debug, error, trace};
+use log::{debug, error, info, trace};
 use std::{ops::Not, sync::Arc};
 use tokio::sync::Mutex;
 
@@ -169,6 +169,12 @@ impl Player {
     }
 
     fn new_game(&mut self, board: Box<dyn board::Board>) -> Option<iced::Task<PlayerMessage>> {
+        info!(
+            "Creating new game board: {}x{} with {} mines",
+            board.width(),
+            board.height(),
+            board.mines()
+        );
         self.game = self
             .skin
             .clone()
@@ -203,11 +209,11 @@ impl Player {
             && let Some(game) = &self.game
         {
             if self.update_solver_in_progress {
-                trace!("Solver update already in progress, scheduling another update");
+                debug!("Solver update already in progress, scheduling another update");
                 self.update_solver_scheduled = true;
                 return None;
             }
-            trace!("Starting solver update");
+            debug!("Starting solver update");
             self.update_solver_in_progress = true;
             return Some(
                 self.solver_overlay
@@ -229,10 +235,12 @@ impl Player {
     }
 
     pub fn update(&mut self, message: PlayerMessage) -> Task<PlayerMessage> {
+        trace!("PlayerMessage received: {:?}", message);
         let mut tasks = vec![];
         'out: {
             match message {
                 PlayerMessage::Game(msg) => {
+                    trace!("Handling GameMessage: {:?}", msg);
                     let is_face_clicked = matches!(msg, game::GameMessage::FaceClicked);
 
                     if let game::GameMessage::ViewportChanged(viewport) = msg {
@@ -246,7 +254,7 @@ impl Player {
                             .as_ref()
                             .map(|game| [game.board().width(), game.board().height(), game.board().mines()]);
                         if Some(self.config.board) != current_board {
-                            debug!("Board configuration changed, recreating the board");
+                            info!("Board configuration changed, recreating the board");
                             let task = self.new_game(Box::new(board::StandardBoard::new(
                                 self.config.board[0],
                                 self.config.board[1],
@@ -278,6 +286,7 @@ impl Player {
                     }
                 },
                 PlayerMessage::TextInputChanged(input_type, value) => {
+                    trace!("TextInput changed: {:?} = '{}'", input_type, value);
                     if value.is_empty() {
                         self.text_input_states[input_type as usize] = value;
                         if input_type == TextInputType::CellSize {
@@ -315,6 +324,7 @@ impl Player {
                     }
                 },
                 PlayerMessage::CellSizeSubmit => {
+                    debug!("CellSize submit received");
                     self.config.cell_size = self
                         .config
                         .cell_size
@@ -338,6 +348,7 @@ impl Player {
                                 .ok()
                         });
                     if let Some(skin) = skin {
+                        info!("Skin applied: {}", self.config.skin);
                         self.skin = Some(skin.clone());
                     }
 
@@ -353,18 +364,20 @@ impl Player {
                     }
                 },
                 PlayerMessage::ChordModeToggled(enabled) => {
+                    trace!("ChordMode toggled: {}", enabled);
                     self.config.chord_mode = if enabled {
                         board::ChordMode::LeftClick
                     } else {
                         board::ChordMode::Standard
                     };
                     self.config_update.chord_mode(self.config.chord_mode);
-                    trace!("Chord mode toggled: {:?}", self.config.chord_mode);
+                    debug!("Chord mode toggled: {:?}", self.config.chord_mode);
                     if let Some(game) = &mut self.game {
                         game.update(game::GameMessage::ChordModeChanged(self.config.chord_mode));
                     }
                 },
                 PlayerMessage::Scrolled(viewport) => {
+                    trace!("Scrolled event received");
                     if let Some(game) = &mut self.game {
                         let absolute_offset = viewport.absolute_offset();
                         let bounds = viewport.bounds();
@@ -380,163 +393,191 @@ impl Player {
                         self.solver_overlay.set_viewport(self.viewport);
                     }
                 },
-                PlayerMessage::Solver(msg) => match &msg {
-                    overlay::SolverOverlayMessage::SetEnabled(true) => {
-                        self.show_probabilities = true;
-                        self.solver_overlay.update(msg);
-                        if let Some(task) = self.update_solver() {
-                            tasks.push(task);
-                        }
-                    },
-                    overlay::SolverOverlayMessage::SetEnabled(false) => {
-                        self.show_probabilities = false;
-                        self.update_solver_in_progress = false;
-                        self.update_solver_scheduled = false;
-                        self.solver_overlay.update(msg);
-                    },
-                    overlay::SolverOverlayMessage::SetAdmitFlags(admit_flags) => {
-                        self.solver_admit_flags = *admit_flags;
-                        self.solver_overlay.update(msg);
-                        if let Some(task) = self.update_solver() {
-                            tasks.push(task);
-                        }
-                    },
-                    overlay::SolverOverlayMessage::SolverCompleted(..) => {
-                        self.solver_overlay.update(msg);
-                        self.update_solver_in_progress = false;
-                        if self.update_solver_scheduled {
-                            trace!("Running scheduled solver update");
-                            self.update_solver_scheduled = false;
+                PlayerMessage::Solver(msg) => {
+                    trace!("Solver message received: {:?}", msg);
+                    match &msg {
+                        overlay::SolverOverlayMessage::SetEnabled(true) => {
+                            debug!("Solver enabled");
+                            self.show_probabilities = true;
+                            self.solver_overlay.update(msg);
                             if let Some(task) = self.update_solver() {
                                 tasks.push(task);
                             }
-                        }
-                    },
-                    _ => self.solver_overlay.update(msg),
-                },
-                PlayerMessage::Import(msg) => match msg {
-                    ImportMessage::ButtonClicked => match self.import_button_state {
-                        ImportButtonState::Import => {
-                            tasks.push(Task::done(PlayerMessage::ShowImportModal));
                         },
-                        ImportButtonState::Completed { .. } => self.import_button_state = ImportButtonState::Import,
-                        _ => (),
-                    },
-                    ImportMessage::StartImport(encode_type, string) => {
-                        debug!("Start import board with type {} and text {}", encode_type, string);
-                        let board_to_import = Arc::clone(&self.board_to_import);
-                        let decoder = match encode_type {
-                            encode_decode::EncodeType::Ascii | encode_decode::EncodeType::AsciiWithNumbers => {
-                                encode_decode::ascii::decode
-                            },
-                            encode_decode::EncodeType::Base64 => encode_decode::base64::decode,
-                            encode_decode::EncodeType::PttUrl => encode_decode::ptt_url::decode,
-                            encode_decode::EncodeType::LlamaUrl => encode_decode::llama_url::decode,
-                        };
-                        let import = self.boxed_import(board::StandardBoard::import);
-                        self.import_button_state = ImportButtonState::Importing;
-                        tasks.push(Task::perform(
-                            async move {
-                                let pack = decoder(&string);
-                                let board = pack.and_then(import);
-                                let mut lock = board_to_import.lock().await;
-                                *lock = board;
-                                PlayerMessage::Import(ImportMessage::ImportCompleted)
-                            },
-                            std::convert::identity,
-                        ));
-                    },
-                    ImportMessage::ImportCompleted => {
-                        debug!("Import completed, retrieving board");
-                        let mut board = self.board_to_import.blocking_lock().take();
-                        trace!("Retrieved board from import: {}", board.is_some());
-                        match board {
-                            Some(board) => {
-                                if let Some(task) = self.new_game(board) {
+                        overlay::SolverOverlayMessage::SetEnabled(false) => {
+                            debug!("Solver disabled");
+                            self.show_probabilities = false;
+                            self.update_solver_in_progress = false;
+                            self.update_solver_scheduled = false;
+                            self.solver_overlay.update(msg);
+                        },
+                        overlay::SolverOverlayMessage::SetAdmitFlags(admit_flags) => {
+                            debug!("Solver admit flags changed: {}", admit_flags);
+                            self.solver_admit_flags = *admit_flags;
+                            self.solver_overlay.update(msg);
+                            if let Some(task) = self.update_solver() {
+                                tasks.push(task);
+                            }
+                        },
+                        overlay::SolverOverlayMessage::SolverCompleted(..) => {
+                            self.solver_overlay.update(msg);
+                            self.update_solver_in_progress = false;
+                            if self.update_solver_scheduled {
+                                debug!("Running scheduled solver update");
+                                self.update_solver_scheduled = false;
+                                if let Some(task) = self.update_solver() {
                                     tasks.push(task);
                                 }
-                                if self.game.is_some() {
-                                    self.import_button_state = ImportButtonState::Completed { remaining_secs: 3 };
-                                } else {
-                                    error!("Failed to import board: invalid skin");
-                                    self.import_button_state = ImportButtonState::Import;
-                                }
-                            },
-                            None => {
-                                self.import_button_state = ImportButtonState::Import;
-                                error!("Failed to import board: invalid data");
-                                tasks.push(Task::done(PlayerMessage::ShowErrorModal(
-                                    "Failed to import, check the log for details".to_string(),
-                                )));
-                            },
-                        };
-                    },
-                    ImportMessage::TimerTick => {
-                        if let ImportButtonState::Completed { remaining_secs } = self.import_button_state {
-                            if remaining_secs > 1 {
-                                self.import_button_state = ImportButtonState::Completed {
-                                    remaining_secs: remaining_secs - 1,
-                                };
-                            } else {
-                                self.import_button_state = ImportButtonState::Import;
                             }
-                        }
-                    },
-                },
-                PlayerMessage::Export(msg) => match msg {
-                    ExportMessage::ButtonClicked => match self.export_button_state {
-                        ExportButtonState::Export => {
-                            tasks.push(Task::done(PlayerMessage::ShowExportModal));
                         },
-                        ExportButtonState::Copied { .. } => self.export_button_state = ExportButtonState::Export,
-                        _ => (),
-                    },
-                    ExportMessage::StartExport(encode_type) => {
-                        if let Some(game) = &self.game {
-                            debug!("Start export board with type {}", encode_type);
-                            self.export_button_state = ExportButtonState::Exporting;
-                            let cell_contents = game.board().cell_contents().clone();
-                            let start_pos = game.board().start_position();
-                            let encoder = match encode_type {
-                                encode_decode::EncodeType::Ascii => encode_decode::ascii::encode,
-                                encode_decode::EncodeType::AsciiWithNumbers => {
-                                    encode_decode::ascii::encode_with_numbers
+                        _ => self.solver_overlay.update(msg),
+                    }
+                },
+                PlayerMessage::Import(msg) => {
+                    trace!("Import message received: {:?}", msg);
+                    match msg {
+                        ImportMessage::ButtonClicked => {
+                            trace!("Import button clicked");
+                            match self.import_button_state {
+                                ImportButtonState::Import => {
+                                    tasks.push(Task::done(PlayerMessage::ShowImportModal));
                                 },
-                                encode_decode::EncodeType::Base64 => encode_decode::base64::encode,
-                                encode_decode::EncodeType::PttUrl => {
-                                    |cell_content: &_, _| encode_decode::ptt_url::encode(cell_content)
+                                ImportButtonState::Completed { .. } => {
+                                    self.import_button_state = ImportButtonState::Import
                                 },
-                                encode_decode::EncodeType::LlamaUrl => {
-                                    |cell_content: &_, _| encode_decode::llama_url::encode(cell_content)
+                                _ => (),
+                            }
+                        },
+                        ImportMessage::StartImport(encode_type, string) => {
+                            debug!("Start import board with type {} and text {}", encode_type, string);
+                            let board_to_import = Arc::clone(&self.board_to_import);
+                            let decoder = match encode_type {
+                                encode_decode::EncodeType::Ascii | encode_decode::EncodeType::AsciiWithNumbers => {
+                                    encode_decode::ascii::decode
                                 },
+                                encode_decode::EncodeType::Base64 => encode_decode::base64::decode,
+                                encode_decode::EncodeType::PttUrl => encode_decode::ptt_url::decode,
+                                encode_decode::EncodeType::LlamaUrl => encode_decode::llama_url::decode,
                             };
+                            let import = self.boxed_import(board::StandardBoard::import);
+                            self.import_button_state = ImportButtonState::Importing;
                             tasks.push(Task::perform(
                                 async move {
-                                    let encoded = encoder(&cell_contents, start_pos);
-                                    ExportMessage::ExportCompleted(encoded)
+                                    let pack = decoder(&string);
+                                    let board = pack.and_then(import);
+                                    let mut lock = board_to_import.lock().await;
+                                    *lock = board;
+                                    PlayerMessage::Import(ImportMessage::ImportCompleted)
                                 },
-                                PlayerMessage::Export,
+                                std::convert::identity,
                             ));
-                        }
-                    },
-                    ExportMessage::ExportCompleted(data) => {
-                        debug!("Export completed, copying data to clipboard: {}", data);
-                        tasks.push(iced::clipboard::write(data));
-                        self.export_button_state = ExportButtonState::Copied { remaining_secs: 3 };
-                    },
-                    ExportMessage::TimerTick => {
-                        if let ExportButtonState::Copied { remaining_secs } = self.export_button_state {
-                            if remaining_secs > 1 {
-                                self.export_button_state = ExportButtonState::Copied {
-                                    remaining_secs: remaining_secs - 1,
-                                };
-                            } else {
-                                self.export_button_state = ExportButtonState::Export;
+                        },
+                        ImportMessage::ImportCompleted => {
+                            debug!("Import completed, retrieving board");
+                            let mut board = self.board_to_import.blocking_lock().take();
+                            debug!("Retrieved board from import: {}", board.is_some());
+                            match board {
+                                Some(board) => {
+                                    if let Some(task) = self.new_game(board) {
+                                        tasks.push(task);
+                                    }
+                                    if self.game.is_some() {
+                                        info!("Board imported successfully");
+                                        self.import_button_state = ImportButtonState::Completed { remaining_secs: 3 };
+                                    } else {
+                                        error!("Failed to import board: invalid skin");
+                                        self.import_button_state = ImportButtonState::Import;
+                                    }
+                                },
+                                None => {
+                                    self.import_button_state = ImportButtonState::Import;
+                                    error!("Failed to import board: invalid data");
+                                    tasks.push(Task::done(PlayerMessage::ShowErrorModal(
+                                        "Failed to import, check the log for details".to_string(),
+                                    )));
+                                },
+                            };
+                        },
+                        ImportMessage::TimerTick => {
+                            trace!("Import timer tick");
+                            if let ImportButtonState::Completed { remaining_secs } = self.import_button_state {
+                                if remaining_secs > 1 {
+                                    self.import_button_state = ImportButtonState::Completed {
+                                        remaining_secs: remaining_secs - 1,
+                                    };
+                                } else {
+                                    self.import_button_state = ImportButtonState::Import;
+                                }
                             }
-                        }
-                    },
+                        },
+                    }
                 },
-                _ => (),
+                PlayerMessage::Export(msg) => {
+                    trace!("Export message received: {:?}", msg);
+                    match msg {
+                        ExportMessage::ButtonClicked => {
+                            trace!("Export button clicked");
+                            match self.export_button_state {
+                                ExportButtonState::Export => {
+                                    tasks.push(Task::done(PlayerMessage::ShowExportModal));
+                                },
+                                ExportButtonState::Copied { .. } => {
+                                    self.export_button_state = ExportButtonState::Export
+                                },
+                                _ => (),
+                            }
+                        },
+                        ExportMessage::StartExport(encode_type) => {
+                            if let Some(game) = &self.game {
+                                debug!("Start export board with type {}", encode_type);
+                                self.export_button_state = ExportButtonState::Exporting;
+                                let cell_contents = game.board().cell_contents().clone();
+                                let start_pos = game.board().start_position();
+                                let encoder = match encode_type {
+                                    encode_decode::EncodeType::Ascii => encode_decode::ascii::encode,
+                                    encode_decode::EncodeType::AsciiWithNumbers => {
+                                        encode_decode::ascii::encode_with_numbers
+                                    },
+                                    encode_decode::EncodeType::Base64 => encode_decode::base64::encode,
+                                    encode_decode::EncodeType::PttUrl => {
+                                        |cell_content: &_, _| encode_decode::ptt_url::encode(cell_content)
+                                    },
+                                    encode_decode::EncodeType::LlamaUrl => {
+                                        |cell_content: &_, _| encode_decode::llama_url::encode(cell_content)
+                                    },
+                                };
+                                tasks.push(Task::perform(
+                                    async move {
+                                        let encoded = encoder(&cell_contents, start_pos);
+                                        ExportMessage::ExportCompleted(encoded)
+                                    },
+                                    PlayerMessage::Export,
+                                ));
+                            }
+                        },
+                        ExportMessage::ExportCompleted(data) => {
+                            info!("Board exported successfully to clipboard");
+                            trace!("Encoded data: {}", data);
+                            tasks.push(iced::clipboard::write(data));
+                            self.export_button_state = ExportButtonState::Copied { remaining_secs: 3 };
+                        },
+                        ExportMessage::TimerTick => {
+                            trace!("Export timer tick");
+                            if let ExportButtonState::Copied { remaining_secs } = self.export_button_state {
+                                if remaining_secs > 1 {
+                                    self.export_button_state = ExportButtonState::Copied {
+                                        remaining_secs: remaining_secs - 1,
+                                    };
+                                } else {
+                                    self.export_button_state = ExportButtonState::Export;
+                                }
+                            }
+                        },
+                    }
+                },
+                _ => {
+                    trace!("Unhandled PlayerMessage variant: {:?}", message);
+                },
             }
         };
         if self.config_update.is_updated() {

@@ -67,7 +67,8 @@ impl GlobalConfig {
         std::fs::create_dir_all(config_path.parent().unwrap())
             .inspect_err(|e| error!("Failed to create config directory: {e}"))?;
         let config_data = toml::to_string(self).inspect_err(|e| error!("Failed to serialize config: {e}"))?;
-        std::fs::write(config_path, config_data).inspect_err(|e| error!("Failed to write config file: {e}"))?;
+        std::fs::write(&config_path, config_data).inspect_err(|e| error!("Failed to write config file: {e}"))?;
+        info!("Configuration saved successfully");
         Ok(())
     }
 
@@ -80,6 +81,8 @@ impl GlobalConfig {
         debug!("Loading config from {:?}", config_path);
         let config_data =
             std::fs::read_to_string(config_path).inspect_err(|e| error!("Failed to read config file: {e}"))?;
-        Ok(toml::from_str(&config_data).inspect_err(|e| error!("Failed to deserialize config: {e}"))?)
+        let config = toml::from_str(&config_data).inspect_err(|e| error!("Failed to deserialize config: {e}"))?;
+        info!("Configuration loaded successfully");
+        Ok(config)
     }
 }
