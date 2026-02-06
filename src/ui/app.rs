@@ -20,14 +20,16 @@ pub enum BaseWindow {
 
 #[derive(Debug, Clone)]
 pub enum AppMessage {
+    GetWindowId(Option<iced::window::Id>),
     Modal(modal::ModalMessage),
     Player(player::PlayerMessage),
-    CloseWindow,
+    CloseWindow(iced::window::Id),
     ActivateWindow,
 }
 
 pub struct App {
     config: GlobalConfig,
+    id: Option<iced::window::Id>,
     base_window: BaseWindow,
     current_modal: modal::Modal,
     player: player::Player,
@@ -37,7 +39,7 @@ pub struct App {
 }
 
 impl App {
-    pub fn new() -> Self {
+    pub fn new() -> (Self, Task<AppMessage>) {
         let config = GlobalConfig::load().unwrap_or_else(|err| {
             warn!("Failed to load config, using default config.");
             GlobalConfig {
@@ -48,15 +50,19 @@ impl App {
             }
         });
         let player = Player::new(config.clone());
-        Self {
-            config,
-            base_window: BaseWindow::default(),
-            current_modal: modal::Modal::default(),
-            player,
-            export: modal::export::ExportModal::new(),
-            import: modal::import::ImportModal::new(),
-            error: modal::error::ErrorModal::new(),
-        }
+        (
+            Self {
+                config,
+                id: None,
+                base_window: BaseWindow::default(),
+                current_modal: modal::Modal::default(),
+                player,
+                export: modal::export::ExportModal::new(),
+                import: modal::import::ImportModal::new(),
+                error: modal::error::ErrorModal::new(),
+            },
+            iced::window::latest().map(AppMessage::GetWindowId),
+        )
     }
 
     fn modal<'a, Message>(
@@ -91,10 +97,17 @@ impl App {
     pub fn update(&mut self, msg: AppMessage) -> Task<AppMessage> {
         trace!("AppMessage received: {:?}", msg);
         match msg {
+            AppMessage::GetWindowId(id) => {
+                debug!("Window ID obtained: {:?}", id);
+                self.id = id;
+            },
             AppMessage::ActivateWindow => {
                 info!("Activating window due to second instance launch");
-                // Get the oldest (main) window and focus it
-                return iced::window::oldest().and_then(|id| iced::window::gain_focus(id));
+                return match self.id {
+                    Some(id) => iced::window::gain_focus(id),
+                    // Get the oldest (main) window and focus it
+                    None => iced::window::oldest().and_then(iced::window::gain_focus),
+                };
             },
             AppMessage::Player(PlayerMessage::SyncConfigToApp(config)) => {
                 debug!("Applying config update: {:?}", config);
@@ -152,10 +165,15 @@ impl App {
                 }
                 self.export.update(msg);
             },
-            AppMessage::CloseWindow => {
-                debug!("Saving config on exit: {:?}", self.config);
-                _ = self.config.save();
-                return iced::exit();
+            AppMessage::CloseWindow(id) => match self.id {
+                Some(main_id) if main_id != id => {
+                    debug!("Ignoring close request for non-main window: {:?}", id);
+                },
+                _ => {
+                    debug!("Saving config on exit: {:?}", self.config);
+                    _ = self.config.save();
+                    return iced::exit();
+                },
             },
         }
         Task::none()
@@ -196,7 +214,7 @@ impl App {
     }
 
     pub fn subscriptions(&self) -> iced::Subscription<AppMessage> {
-        let close = iced::window::close_requests().map(|_| AppMessage::CloseWindow);
+        let close = iced::window::close_requests().map(AppMessage::CloseWindow);
         let player = self.player.subscriptions().map(AppMessage::Player);
         let activation = crate::single_instance::activation_subscription();
         iced::Subscription::batch([close, player, activation])
