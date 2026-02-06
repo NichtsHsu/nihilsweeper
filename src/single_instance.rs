@@ -9,6 +9,9 @@ const ACTIVATION_MSG: &[u8] = b"ACTIVATE";
 // Global notifier for window activation
 static ACTIVATION_NOTIFIER: OnceLock<Arc<tokio::sync::Notify>> = OnceLock::new();
 
+// Global single instance lock - must be kept alive for the entire application lifetime
+static SINGLE_INSTANCE_LOCK: OnceLock<single_instance::SingleInstance> = OnceLock::new();
+
 /// Get the activation notifier (initializes it if not already initialized)
 fn get_activation_notifier() -> Arc<tokio::sync::Notify> {
     ACTIVATION_NOTIFIER
@@ -40,6 +43,13 @@ pub fn check_single_instance() -> Result<bool, Box<dyn std::error::Error>> {
 
     if instance.is_single() {
         info!("This is the first instance, setting up IPC server");
+        
+        // Store the instance lock in a static to keep it alive for the application lifetime
+        // This prevents other instances from acquiring the lock
+        SINGLE_INSTANCE_LOCK.set(instance).map_err(|_| {
+            "Failed to store single instance lock"
+        })?;
+        
         let notifier = get_activation_notifier();
 
         // Start IPC server in a background thread
