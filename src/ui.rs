@@ -7,4 +7,4 @@ mod overlay;
 mod player;
 pub mod skin;
 
-pub use app::App;
+pub use app::{App, AppMessage};
