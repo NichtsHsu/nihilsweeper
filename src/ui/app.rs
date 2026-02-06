@@ -93,8 +93,8 @@ impl App {
         match msg {
             AppMessage::ActivateWindow => {
                 info!("Activating window due to second instance launch");
-                // Use the unique() method to get the main window ID
-                return iced::window::gain_focus(iced::window::Id::unique());
+                // Get the oldest (main) window and focus it
+                return iced::window::oldest().and_then(|id| iced::window::gain_focus(id));
             },
             AppMessage::Player(PlayerMessage::SyncConfigToApp(config)) => {
                 debug!("Applying config update: {:?}", config);
