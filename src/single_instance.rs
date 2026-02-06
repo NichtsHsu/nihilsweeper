@@ -63,6 +63,17 @@ fn run_ipc_server(notifier: Arc<tokio::sync::Notify>) -> Result<(), Box<dyn std:
     let name = get_socket_name()?;
     debug!("Creating IPC server with socket name: {:?}", name);
 
+    // Clean up any existing socket file to prevent "Address already in use" error
+    // This is necessary for file-based Unix domain sockets
+    if !GenericNamespaced::is_supported() {
+        // We're using file-based socket, remove it if it exists
+        let path = format!("/tmp/{}.sock", SOCKET_NAME);
+        if std::path::Path::new(&path).exists() {
+            debug!("Removing existing socket file: {}", path);
+            let _ = std::fs::remove_file(&path);
+        }
+    }
+
     let listener = ListenerOptions::new().name(name).create_sync()?;
     info!("IPC server listening for activation requests");
 
