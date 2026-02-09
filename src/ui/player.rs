@@ -6,8 +6,11 @@ use crate::{
 };
 use iced::{Function, Task};
 use log::{debug, error, info, trace};
-use std::{ops::Not, sync::Arc};
+use std::sync::Arc;
 use tokio::sync::Mutex;
+
+mod game;
+pub use game::GameMessage;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TextInputType {
@@ -46,7 +49,7 @@ pub enum RequestMessage {
 pub enum PlayerMessage {
     Request(RequestMessage),
     UpdateSkin(Arc<skin::Skin>),
-    Game(game::GameMessage),
+    Game(GameMessage),
     TextInputChanged(TextInputType, String),
     CellSizeSubmit,
     ChordModeToggled(bool),
@@ -70,8 +73,8 @@ pub enum ImportButtonState {
     Completed { remaining_secs: u64 },
 }
 
-impl From<game::GameMessage> for PlayerMessage {
-    fn from(message: game::GameMessage) -> Self {
+impl From<GameMessage> for PlayerMessage {
+    fn from(message: GameMessage) -> Self {
         PlayerMessage::Game(message)
     }
 }
@@ -170,7 +173,7 @@ impl Player {
             game_area: self.game.game_area(),
             board_area: self.game.board_area(),
         });
-        self.game.update(game::GameMessage::ViewportChanged(self.viewport));
+        self.game.update(GameMessage::ViewportChanged(self.viewport));
         self.update_solver()
     }
 
@@ -211,7 +214,7 @@ impl Player {
                     trace!("Updating skin in Player");
                     self.skin = skin;
                     self.game
-                        .update(game::GameMessage::Resize(self.config.cell_size, Arc::clone(&self.skin)));
+                        .update(GameMessage::Resize(self.config.cell_size, Arc::clone(&self.skin)));
                     self.solver_overlay.update(overlay::SolverOverlayMessage::Resize {
                         cell_size: self.config.cell_size,
                         game_area: self.game.game_area(),
@@ -220,9 +223,9 @@ impl Player {
                 },
                 PlayerMessage::Game(msg) => {
                     trace!("Handling GameMessage: {:?}", msg);
-                    let is_face_clicked = matches!(msg, game::GameMessage::FaceClicked);
+                    let is_face_clicked = matches!(msg, GameMessage::FaceClicked);
 
-                    if let game::GameMessage::ViewportChanged(viewport) = msg {
+                    if let GameMessage::ViewportChanged(viewport) = msg {
                         self.viewport = viewport;
                         self.solver_overlay.set_viewport(viewport);
                     }
@@ -314,8 +317,7 @@ impl Player {
                     };
                     self.config_update.chord_mode(self.config.chord_mode);
                     debug!("Chord mode toggled: {:?}", self.config.chord_mode);
-                    self.game
-                        .update(game::GameMessage::ChordModeChanged(self.config.chord_mode));
+                    self.game.update(GameMessage::ChordModeChanged(self.config.chord_mode));
                 },
                 PlayerMessage::Scrolled(viewport) => {
                     trace!("Scrolled event received");
@@ -329,7 +331,7 @@ impl Player {
                     };
                     trace!("Scroll event: viewport = {:?}", viewport_rect);
                     self.viewport = viewport_rect;
-                    self.game.update(game::GameMessage::ViewportChanged(viewport_rect));
+                    self.game.update(GameMessage::ViewportChanged(viewport_rect));
                     self.solver_overlay.set_viewport(self.viewport);
                 },
                 PlayerMessage::Solver(msg) => {
@@ -413,7 +415,7 @@ impl Player {
                         },
                         ImportMessage::ImportCompleted => {
                             debug!("Import completed, retrieving board");
-                            let mut board = self.board_to_import.blocking_lock().take();
+                            let board = self.board_to_import.blocking_lock().take();
                             debug!("Retrieved board from import: {}", board.is_some());
                             match board {
                                 Some(board) => {
@@ -563,14 +565,14 @@ impl Player {
                 iced::widget::center_x(
                     iced::widget::button(iced::widget::text("New Game").align_x(iced::alignment::Horizontal::Center))
                         .width(120.0)
-                        .on_press_maybe(enable_button.then_some(PlayerMessage::Game(game::GameMessage::FaceClicked)))
+                        .on_press_maybe(enable_button.then_some(PlayerMessage::Game(GameMessage::FaceClicked)))
                 ),
                 iced::widget::center_x(
                     iced::widget::button(iced::widget::text("Continue").align_x(iced::alignment::Horizontal::Center))
                         .width(120.0)
                         .on_press_maybe(
                             (enable_button && matches!(self.game.board().state(), board::BoardState::Lost { .. }))
-                                .then_some(PlayerMessage::Game(game::GameMessage::Continue))
+                                .then_some(PlayerMessage::Game(GameMessage::Continue))
                         )
                 ),
                 iced::widget::center_x(
@@ -578,7 +580,7 @@ impl Player {
                         .width(120.0)
                         .on_press_maybe(
                             (enable_button && !matches!(self.game.board().state(), board::BoardState::NotStarted))
-                                .then_some(PlayerMessage::Game(game::GameMessage::Replay))
+                                .then_some(PlayerMessage::Game(GameMessage::Replay))
                         )
                 ),
                 iced::widget::center_x(
@@ -662,25 +664,21 @@ impl Player {
         let listen = iced::event::listen_with(|event, _, _| match event {
             iced::Event::Window(iced::window::Event::Opened { size, .. }) => {
                 trace!("Window opened with size: {:?}", size);
-                Some(PlayerMessage::Game(game::GameMessage::ViewportChanged(
-                    iced::Rectangle {
-                        x: 0.0,
-                        y: 0.0,
-                        width: size.width,
-                        height: size.height,
-                    },
-                )))
+                Some(PlayerMessage::Game(GameMessage::ViewportChanged(iced::Rectangle {
+                    x: 0.0,
+                    y: 0.0,
+                    width: size.width,
+                    height: size.height,
+                })))
             },
             iced::Event::Window(iced::window::Event::Resized(size)) => {
                 trace!("Window resized to size: {:?}", size);
-                Some(PlayerMessage::Game(game::GameMessage::ViewportChanged(
-                    iced::Rectangle {
-                        x: 0.0,
-                        y: 0.0,
-                        width: size.width,
-                        height: size.height,
-                    },
-                )))
+                Some(PlayerMessage::Game(GameMessage::ViewportChanged(iced::Rectangle {
+                    x: 0.0,
+                    y: 0.0,
+                    width: size.width,
+                    height: size.height,
+                })))
             },
             _ => None,
         });

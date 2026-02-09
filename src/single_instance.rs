@@ -2,7 +2,7 @@ use interprocess::local_socket::{GenericFilePath, GenericNamespaced, ListenerOpt
 use log::{debug, error, info, warn};
 use std::{
     io::{Read, Write},
-    sync::{Arc, Mutex, OnceLock},
+    sync::{Arc, OnceLock},
 };
 
 const SOCKET_NAME: &str = "nihilsweeper-ipc";

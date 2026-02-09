@@ -1,7 +1,7 @@
 use super::{BoardSafety, CellProbability, CellSafety, Solver};
 use log::trace;
 use smallvec::smallvec;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 // A witness can witness up to 8 boxes, and a box can be witnessed by up to 8 witnesses,
 // so we can use SmallVec for better performance.
@@ -490,8 +490,6 @@ impl Solver for ProbabilityCalculator {
             }
         }
         let mines_left = board.mines().saturating_sub(known_mines);
-
-        let mut total_frontier_cells = boxes.iter().map(|b| b.cells.len()).sum::<usize>();
 
         // Count wilderness cells
         let mut wilderness_count = 0;

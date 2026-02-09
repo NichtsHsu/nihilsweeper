@@ -1,4 +1,4 @@
-use super::{BoardSafety, CellSafety, Solver};
+use super::{BoardSafety, Solver};
 
 #[derive(Debug, Clone, Default)]
 pub struct GuessingLogic;

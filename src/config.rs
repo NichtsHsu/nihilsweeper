@@ -1,5 +1,5 @@
 use crate::base::board;
-use log::{debug, error, info, trace, warn};
+use log::{debug, error, info};
 use pastey::paste;
 
 macro_rules! update_config {

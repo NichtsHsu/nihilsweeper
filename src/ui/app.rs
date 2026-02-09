@@ -12,8 +12,6 @@ use crate::{
     },
 };
 
-use iced::futures::StreamExt;
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum BaseWindow {
     #[default]
@@ -46,7 +44,7 @@ pub struct App {
 impl App {
     pub fn new() -> (Self, Task<AppMessage>) {
         let config = GlobalConfig::load().unwrap_or_else(|err| {
-            warn!("Failed to load config, using default config.");
+            warn!("Failed to load config: {}, using default config.", err);
             GlobalConfig {
                 chord_mode: board::ChordMode::LeftClick,
                 skin: "WoM Light".to_string(),

@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::{base::board, config::GlobalConfig, ui::skin};
+use crate::{base::board, ui::skin};
 use iced::widget::canvas;
 use log::{debug, trace};
 

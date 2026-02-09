@@ -285,7 +285,7 @@ impl StandardBoard {
             && let Some(click_index) = self.index(cx, cy)
         {
             let len = self.cell_contents.len();
-            let mut data = self.cell_contents.data_mut();
+            let data = self.cell_contents.data_mut();
             if cx == 0 && cy == 0 {
                 // Clicked on top-left corner
                 data.swap(0, len - 1);

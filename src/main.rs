@@ -1,4 +1,7 @@
-#![allow(unused)]
+#![allow(dead_code)]
+#![warn(unused_imports)]
+#![warn(unused_labels)]
+#![warn(unused_variables)]
 
 mod base;
 mod config;
