@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use crate::{base::board, config::GlobalConfig, ui::skin};
 use iced::widget::canvas;
 use log::{debug, trace};
@@ -14,7 +16,7 @@ pub enum GameMessage {
     Board(BoardMessage),
     FaceClicked,
     PressedPositionChanged,
-    Resize(u32, Box<skin::Skin>),
+    Resize(u32, Arc<skin::Skin>),
     ChordModeChanged(board::ChordMode),
     ViewportChanged(iced::Rectangle),
     Continue,
@@ -50,12 +52,12 @@ pub struct Game {
     cell_size: u32,
     foreground_cache: canvas::Cache,
     background_cache: canvas::Cache,
-    skin: skin::Skin,
+    skin: Arc<skin::Skin>,
     viewport: iced::Rectangle,
 }
 
 impl Game {
-    pub fn new(board: Box<dyn board::Board>, cell_size: u32, skin: skin::Skin) -> Self {
+    pub fn new(board: Box<dyn board::Board>, cell_size: u32, skin: Arc<skin::Skin>) -> Self {
         let mut this = Self {
             board,
             game_area: iced::Rectangle::default(),
@@ -490,7 +492,7 @@ impl Game {
             GameMessage::Resize(cell_size, skin) => {
                 debug!("Resizing cell size to {}", cell_size);
                 self.cell_size = cell_size;
-                self.skin = *skin;
+                self.skin = skin;
                 self.calculate_areas();
                 self.foreground_cache.clear();
                 self.background_cache.clear();

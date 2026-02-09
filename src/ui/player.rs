@@ -34,7 +34,18 @@ pub enum ImportMessage {
 }
 
 #[derive(Debug, Clone)]
+pub enum RequestMessage {
+    SyncConfigToApp(GlobalConfigUpdate),
+    RegenerateSkin { skin: String, cell_size: u32 },
+    ShowImportModal,
+    ShowExportModal,
+    ShowErrorModal(String),
+}
+
+#[derive(Debug, Clone)]
 pub enum PlayerMessage {
+    Request(RequestMessage),
+    UpdateSkin(Arc<skin::Skin>),
     Game(game::GameMessage),
     TextInputChanged(TextInputType, String),
     CellSizeSubmit,
@@ -43,10 +54,6 @@ pub enum PlayerMessage {
     Solver(overlay::SolverOverlayMessage),
     Export(ExportMessage),
     Import(ImportMessage),
-    SyncConfigToApp(GlobalConfigUpdate),
-    ShowImportModal,
-    ShowExportModal,
-    ShowErrorModal(String),
 }
 
 #[derive(Debug, Clone)]
@@ -80,10 +87,8 @@ pub struct Player {
     config_update: GlobalConfigUpdate,
     show_probabilities: bool,
     solver_admit_flags: bool,
-    skin_manager: Option<skin::SkinManager>,
-    skin: Option<skin::Skin>,
-    theme: iced::Theme,
-    game: Option<game::Game>,
+    skin: Arc<skin::Skin>,
+    game: game::Game,
     board_to_import: Arc<Mutex<Option<Box<dyn board::Board + Send>>>>,
     text_input_states: [String; 4],
     solver_overlay: overlay::SolverOverlay,
@@ -99,39 +104,14 @@ impl Player {
     const TEXT_INPUT_LOWER: [usize; 4] = [1, 1, 1, 8];
     const TEXT_INPUT_DEFAULTS: [usize; 4] = [30, 16, 99, 24];
 
-    pub fn new(config: GlobalConfig) -> Self {
+    pub fn new(config: GlobalConfig, skin: Arc<skin::Skin>) -> Self {
         let board = Box::new(board::StandardBoard::new(
             config.board[0],
             config.board[1],
             config.board[2],
             config.chord_mode,
         ));
-        let skin_manager = crate::utils::resource_path("skin")
-            .inspect_err(|e| error!("Failed to get skin resource path: {}", e))
-            .and_then(|path| {
-                skin::SkinManager::new(path).inspect_err(|e| error!("Failed to initialize SkinManager: {}", e))
-            })
-            .ok();
-        let skin = skin_manager
-            .as_ref()
-            .and_then(|manager| {
-                manager.skins().get(&config.skin).or_else(|| {
-                    error!("Skin '{}' not found.", config.skin);
-                    None
-                })
-            })
-            .and_then(|builder| {
-                builder
-                    .build(config.cell_size)
-                    .inspect_err(|e| error!("Failed to build skin '{}': {}", config.skin, e))
-                    .ok()
-            });
-        let theme = if skin.as_ref().map(|s| s.light).unwrap_or_default() {
-            iced::Theme::Light
-        } else {
-            iced::Theme::Dark
-        };
-        let game = skin.clone().map(|skin| game::Game::new(board, config.cell_size, skin));
+        let game = game::Game::new(board, config.cell_size, Arc::clone(&skin));
         let text_input_states = [
             config.board[0].to_string(),
             config.board[1].to_string(),
@@ -140,22 +120,18 @@ impl Player {
         ];
         let mut solver_overlay = overlay::SolverOverlay::new(
             solver::default_engine(),
-            game.as_ref().map(|game| game.game_area()).unwrap_or_default(),
-            game.as_ref().map(|game| game.board_area()).unwrap_or_default(),
+            game.game_area(),
+            game.board_area(),
             iced::Rectangle::default(),
             config.cell_size,
         );
-        solver_overlay.update(overlay::SolverOverlayMessage::SetLightSkin(
-            skin.as_ref().is_some_and(|s| s.light),
-        ));
+        solver_overlay.update(overlay::SolverOverlayMessage::SetLightSkin(skin.light));
         Self {
             config,
             config_update: GlobalConfigUpdate::default(),
             show_probabilities: false,
             solver_admit_flags: false,
-            skin_manager,
             skin,
-            theme,
             game,
             board_to_import: Arc::new(Mutex::new(None)),
             text_input_states,
@@ -175,39 +151,31 @@ impl Player {
             board.height(),
             board.mines()
         );
-        self.game = self
-            .skin
-            .clone()
-            .map(|skin| game::Game::new(board, self.config.cell_size, skin))
-            .inspect(|game| {
-                self.config.board = [game.board().width(), game.board().height(), game.board().mines()];
-                self.config_update.board(self.config.board);
-                self.text_input_states = [
-                    self.config.board[0].to_string(),
-                    self.config.board[1].to_string(),
-                    self.config.board[2].to_string(),
-                    self.config.cell_size.to_string(),
-                ];
-                self.solver_overlay.clear_solver();
-                self.solver_overlay.update(overlay::SolverOverlayMessage::Resize {
-                    cell_size: self.config.cell_size,
-                    game_area: game.game_area(),
-                    board_area: game.board_area(),
-                });
-            });
-        if let Some(game) = &mut self.game {
-            game.update(game::GameMessage::ViewportChanged(self.viewport));
-            if let Some(task) = self.update_solver() {
-                return Some(task);
-            }
-        }
-        None
+        self.game = game::Game::new(board, self.config.cell_size, Arc::clone(&self.skin));
+        self.config.board = [
+            self.game.board().width(),
+            self.game.board().height(),
+            self.game.board().mines(),
+        ];
+        self.config_update.board(self.config.board);
+        self.text_input_states = [
+            self.config.board[0].to_string(),
+            self.config.board[1].to_string(),
+            self.config.board[2].to_string(),
+            self.config.cell_size.to_string(),
+        ];
+        self.solver_overlay.clear_solver();
+        self.solver_overlay.update(overlay::SolverOverlayMessage::Resize {
+            cell_size: self.config.cell_size,
+            game_area: self.game.game_area(),
+            board_area: self.game.board_area(),
+        });
+        self.game.update(game::GameMessage::ViewportChanged(self.viewport));
+        self.update_solver()
     }
 
     fn update_solver(&mut self) -> Option<Task<PlayerMessage>> {
-        if self.show_probabilities
-            && let Some(game) = &self.game
-        {
+        if self.show_probabilities {
             if self.update_solver_in_progress {
                 debug!("Solver update already in progress, scheduling another update");
                 self.update_solver_scheduled = true;
@@ -217,7 +185,7 @@ impl Player {
             self.update_solver_in_progress = true;
             return Some(
                 self.solver_overlay
-                    .update_solver(game.board())
+                    .update_solver(self.game.board())
                     .map(PlayerMessage::Solver),
             );
         }
@@ -239,6 +207,17 @@ impl Player {
         let mut tasks = vec![];
         'out: {
             match message {
+                PlayerMessage::UpdateSkin(skin) => {
+                    trace!("Updating skin in Player");
+                    self.skin = skin;
+                    self.game
+                        .update(game::GameMessage::Resize(self.config.cell_size, Arc::clone(&self.skin)));
+                    self.solver_overlay.update(overlay::SolverOverlayMessage::Resize {
+                        cell_size: self.config.cell_size,
+                        game_area: self.game.game_area(),
+                        board_area: self.game.board_area(),
+                    });
+                },
                 PlayerMessage::Game(msg) => {
                     trace!("Handling GameMessage: {:?}", msg);
                     let is_face_clicked = matches!(msg, game::GameMessage::FaceClicked);
@@ -249,11 +228,12 @@ impl Player {
                     }
 
                     if is_face_clicked {
-                        let current_board = self
-                            .game
-                            .as_ref()
-                            .map(|game| [game.board().width(), game.board().height(), game.board().mines()]);
-                        if Some(self.config.board) != current_board {
+                        let current_board = [
+                            self.game.board().width(),
+                            self.game.board().height(),
+                            self.game.board().mines(),
+                        ];
+                        if self.config.board != current_board {
                             info!("Board configuration changed, recreating the board");
                             let task = self.new_game(Box::new(board::StandardBoard::new(
                                 self.config.board[0],
@@ -268,21 +248,23 @@ impl Player {
                         }
                     }
 
-                    if let Some(game) = &mut self.game {
-                        let should_update_solver = game.update(msg);
-                        if is_face_clicked {
-                            self.config.board = [game.board().width(), game.board().height(), game.board().mines()];
-                            self.config_update.board(self.config.board);
-                            self.text_input_states = [
-                                self.config.board[0].to_string(),
-                                self.config.board[1].to_string(),
-                                self.config.board[2].to_string(),
-                                self.config.cell_size.to_string(),
-                            ];
-                        }
-                        if should_update_solver && let Some(task) = self.update_solver() {
-                            tasks.push(task);
-                        }
+                    let should_update_solver = self.game.update(msg);
+                    if is_face_clicked {
+                        self.config.board = [
+                            self.game.board().width(),
+                            self.game.board().height(),
+                            self.game.board().mines(),
+                        ];
+                        self.config_update.board(self.config.board);
+                        self.text_input_states = [
+                            self.config.board[0].to_string(),
+                            self.config.board[1].to_string(),
+                            self.config.board[2].to_string(),
+                            self.config.cell_size.to_string(),
+                        ];
+                    }
+                    if should_update_solver && let Some(task) = self.update_solver() {
+                        tasks.push(task);
                     }
                 },
                 PlayerMessage::TextInputChanged(input_type, value) => {
@@ -290,22 +272,14 @@ impl Player {
                     if value.is_empty() {
                         self.text_input_states[input_type as usize] = value;
                         if input_type == TextInputType::CellSize {
-                            self.config.cell_size = if let Some(game) = &self.game {
-                                game.cell_size()
-                            } else {
-                                Player::TEXT_INPUT_DEFAULTS[TextInputType::CellSize as usize] as u32
-                            };
+                            self.config.cell_size = self.game.cell_size();
                         } else {
-                            self.config.board[input_type as usize] = if let Some(game) = &self.game {
-                                match input_type {
-                                    TextInputType::Width => game.board().width(),
-                                    TextInputType::Height => game.board().height(),
-                                    TextInputType::Mines => game.board().mines(),
-                                    _ => unreachable!(),
-                                }
-                            } else {
-                                Player::TEXT_INPUT_DEFAULTS[input_type as usize]
-                            };
+                            self.config.board[input_type as usize] = match input_type {
+                                TextInputType::Width => self.game.board().width(),
+                                TextInputType::Height => self.game.board().height(),
+                                TextInputType::Mines => self.game.board().mines(),
+                                _ => unreachable!(),
+                            }
                         }
                         break 'out;
                     }
@@ -325,43 +299,11 @@ impl Player {
                 },
                 PlayerMessage::CellSizeSubmit => {
                     debug!("CellSize submit received");
-                    self.config.cell_size = self
-                        .config
-                        .cell_size
-                        .max(Player::TEXT_INPUT_LOWER[TextInputType::CellSize as usize] as u32);
                     self.config_update.cell_size(self.config.cell_size);
-                    self.text_input_states[TextInputType::CellSize as usize] = self.config.cell_size.to_string();
-                    trace!("Cell size submitted: {}", self.config.cell_size);
-                    let skin = self
-                        .skin_manager
-                        .as_ref()
-                        .and_then(|manager| {
-                            manager.skins().get(&self.config.skin).or_else(|| {
-                                error!("Skin '{}' not found.", self.config.skin);
-                                None
-                            })
-                        })
-                        .and_then(|builder| {
-                            builder
-                                .build(self.config.cell_size)
-                                .inspect_err(|e| error!("Failed to build skin '{}': {}", self.config.skin, e))
-                                .ok()
-                        });
-                    if let Some(skin) = skin {
-                        info!("Skin applied: {}", self.config.skin);
-                        self.skin = Some(skin.clone());
-                    }
-
-                    if let Some(game) = &mut self.game
-                        && let Some(skin) = &self.skin
-                    {
-                        game.update(game::GameMessage::Resize(self.config.cell_size, Box::new(skin.clone())));
-                        self.solver_overlay.update(overlay::SolverOverlayMessage::Resize {
-                            cell_size: self.config.cell_size,
-                            game_area: game.game_area(),
-                            board_area: game.board_area(),
-                        });
-                    }
+                    tasks.push(Task::done(PlayerMessage::Request(RequestMessage::RegenerateSkin {
+                        skin: self.skin.name.clone(),
+                        cell_size: self.config.cell_size,
+                    })));
                 },
                 PlayerMessage::ChordModeToggled(enabled) => {
                     trace!("ChordMode toggled: {}", enabled);
@@ -372,26 +314,23 @@ impl Player {
                     };
                     self.config_update.chord_mode(self.config.chord_mode);
                     debug!("Chord mode toggled: {:?}", self.config.chord_mode);
-                    if let Some(game) = &mut self.game {
-                        game.update(game::GameMessage::ChordModeChanged(self.config.chord_mode));
-                    }
+                    self.game
+                        .update(game::GameMessage::ChordModeChanged(self.config.chord_mode));
                 },
                 PlayerMessage::Scrolled(viewport) => {
                     trace!("Scrolled event received");
-                    if let Some(game) = &mut self.game {
-                        let absolute_offset = viewport.absolute_offset();
-                        let bounds = viewport.bounds();
-                        let viewport_rect = iced::Rectangle {
-                            x: absolute_offset.x,
-                            y: absolute_offset.y,
-                            width: bounds.width,
-                            height: bounds.height,
-                        };
-                        trace!("Scroll event: viewport = {:?}", viewport_rect);
-                        self.viewport = viewport_rect;
-                        game.update(game::GameMessage::ViewportChanged(viewport_rect));
-                        self.solver_overlay.set_viewport(self.viewport);
-                    }
+                    let absolute_offset = viewport.absolute_offset();
+                    let bounds = viewport.bounds();
+                    let viewport_rect = iced::Rectangle {
+                        x: absolute_offset.x,
+                        y: absolute_offset.y,
+                        width: bounds.width,
+                        height: bounds.height,
+                    };
+                    trace!("Scroll event: viewport = {:?}", viewport_rect);
+                    self.viewport = viewport_rect;
+                    self.game.update(game::GameMessage::ViewportChanged(viewport_rect));
+                    self.solver_overlay.set_viewport(self.viewport);
                 },
                 PlayerMessage::Solver(msg) => {
                     trace!("Solver message received: {:?}", msg);
@@ -440,7 +379,7 @@ impl Player {
                             trace!("Import button clicked");
                             match self.import_button_state {
                                 ImportButtonState::Import => {
-                                    tasks.push(Task::done(PlayerMessage::ShowImportModal));
+                                    tasks.push(Task::done(PlayerMessage::Request(RequestMessage::ShowImportModal)));
                                 },
                                 ImportButtonState::Completed { .. } => {
                                     self.import_button_state = ImportButtonState::Import
@@ -481,20 +420,15 @@ impl Player {
                                     if let Some(task) = self.new_game(board) {
                                         tasks.push(task);
                                     }
-                                    if self.game.is_some() {
-                                        info!("Board imported successfully");
-                                        self.import_button_state = ImportButtonState::Completed { remaining_secs: 3 };
-                                    } else {
-                                        error!("Failed to import board: invalid skin");
-                                        self.import_button_state = ImportButtonState::Import;
-                                    }
+                                    info!("Board imported successfully");
+                                    self.import_button_state = ImportButtonState::Completed { remaining_secs: 3 };
                                 },
                                 None => {
                                     self.import_button_state = ImportButtonState::Import;
                                     error!("Failed to import board: invalid data");
-                                    tasks.push(Task::done(PlayerMessage::ShowErrorModal(
+                                    tasks.push(Task::done(PlayerMessage::Request(RequestMessage::ShowErrorModal(
                                         "Failed to import, check the log for details".to_string(),
-                                    )));
+                                    ))));
                                 },
                             };
                         },
@@ -519,7 +453,7 @@ impl Player {
                             trace!("Export button clicked");
                             match self.export_button_state {
                                 ExportButtonState::Export => {
-                                    tasks.push(Task::done(PlayerMessage::ShowExportModal));
+                                    tasks.push(Task::done(PlayerMessage::Request(RequestMessage::ShowExportModal)));
                                 },
                                 ExportButtonState::Copied { .. } => {
                                     self.export_button_state = ExportButtonState::Export
@@ -528,32 +462,30 @@ impl Player {
                             }
                         },
                         ExportMessage::StartExport(encode_type) => {
-                            if let Some(game) = &self.game {
-                                debug!("Start export board with type {}", encode_type);
-                                self.export_button_state = ExportButtonState::Exporting;
-                                let cell_contents = game.board().cell_contents().clone();
-                                let start_pos = game.board().start_position();
-                                let encoder = match encode_type {
-                                    encode_decode::EncodeType::Ascii => encode_decode::ascii::encode,
-                                    encode_decode::EncodeType::AsciiWithNumbers => {
-                                        encode_decode::ascii::encode_with_numbers
-                                    },
-                                    encode_decode::EncodeType::Base64 => encode_decode::base64::encode,
-                                    encode_decode::EncodeType::PttUrl => {
-                                        |cell_content: &_, _| encode_decode::ptt_url::encode(cell_content)
-                                    },
-                                    encode_decode::EncodeType::LlamaUrl => {
-                                        |cell_content: &_, _| encode_decode::llama_url::encode(cell_content)
-                                    },
-                                };
-                                tasks.push(Task::perform(
-                                    async move {
-                                        let encoded = encoder(&cell_contents, start_pos);
-                                        ExportMessage::ExportCompleted(encoded)
-                                    },
-                                    PlayerMessage::Export,
-                                ));
-                            }
+                            debug!("Start export board with type {}", encode_type);
+                            self.export_button_state = ExportButtonState::Exporting;
+                            let cell_contents = self.game.board().cell_contents().clone();
+                            let start_pos = self.game.board().start_position();
+                            let encoder = match encode_type {
+                                encode_decode::EncodeType::Ascii => encode_decode::ascii::encode,
+                                encode_decode::EncodeType::AsciiWithNumbers => {
+                                    encode_decode::ascii::encode_with_numbers
+                                },
+                                encode_decode::EncodeType::Base64 => encode_decode::base64::encode,
+                                encode_decode::EncodeType::PttUrl => {
+                                    |cell_content: &_, _| encode_decode::ptt_url::encode(cell_content)
+                                },
+                                encode_decode::EncodeType::LlamaUrl => {
+                                    |cell_content: &_, _| encode_decode::llama_url::encode(cell_content)
+                                },
+                            };
+                            tasks.push(Task::perform(
+                                async move {
+                                    let encoded = encoder(&cell_contents, start_pos);
+                                    ExportMessage::ExportCompleted(encoded)
+                                },
+                                PlayerMessage::Export,
+                            ));
                         },
                         ExportMessage::ExportCompleted(data) => {
                             info!("Board exported successfully to clipboard");
@@ -582,7 +514,10 @@ impl Player {
         };
         if self.config_update.is_updated() {
             let update = std::mem::take(&mut self.config_update);
-            tasks.insert(0, Task::done(PlayerMessage::SyncConfigToApp(update)));
+            tasks.insert(
+                0,
+                Task::done(PlayerMessage::Request(RequestMessage::SyncConfigToApp(update))),
+            );
         }
 
         Task::batch(tasks)
@@ -633,37 +568,35 @@ impl Player {
                 iced::widget::center_x(
                     iced::widget::button(iced::widget::text("Continue").align_x(iced::alignment::Horizontal::Center))
                         .width(120.0)
-                        .on_press_maybe(self.game.as_ref().and_then(|game| {
-                            (enable_button && matches!(game.board().state(), board::BoardState::Lost { .. }))
+                        .on_press_maybe(
+                            (enable_button && matches!(self.game.board().state(), board::BoardState::Lost { .. }))
                                 .then_some(PlayerMessage::Game(game::GameMessage::Continue))
-                        }))
+                        )
                 ),
                 iced::widget::center_x(
                     iced::widget::button(iced::widget::text("Replay").align_x(iced::alignment::Horizontal::Center))
                         .width(120.0)
-                        .on_press_maybe(self.game.as_ref().and_then(|game| {
-                            (enable_button && !matches!(game.board().state(), board::BoardState::NotStarted))
+                        .on_press_maybe(
+                            (enable_button && !matches!(self.game.board().state(), board::BoardState::NotStarted))
                                 .then_some(PlayerMessage::Game(game::GameMessage::Replay))
-                        }))
+                        )
                 ),
                 iced::widget::center_x(
                     iced::widget::button(
                         iced::widget::text(export_button_label).align_x(iced::alignment::Horizontal::Center)
                     )
                     .width(120.0)
-                    .on_press_maybe(self.game.as_ref().and_then(|game| {
-                        (enable_button && !matches!(game.board().state(), board::BoardState::NotStarted))
+                    .on_press_maybe(
+                        (enable_button && !matches!(self.game.board().state(), board::BoardState::NotStarted))
                             .then_some(PlayerMessage::Export(ExportMessage::ButtonClicked))
-                    }))
+                    )
                 ),
                 iced::widget::center_x(
                     iced::widget::button(
                         iced::widget::text(import_button_label).align_x(iced::alignment::Horizontal::Center)
                     )
                     .width(120.0)
-                    .on_press_maybe(self.game.as_ref().and_then(|game| {
-                        enable_button.then_some(PlayerMessage::Import(ImportMessage::ButtonClicked))
-                    }))
+                    .on_press_maybe(enable_button.then_some(PlayerMessage::Import(ImportMessage::ButtonClicked)))
                 ),
             ]
             .spacing(4)
@@ -709,20 +642,12 @@ impl Player {
             .padding(4),
         )
         .width(iced::Length::Fixed(200.0));
-        iced::widget::scrollable(if let Some(game) = &self.game {
-            iced::widget::row![
-                control_panel,
-                iced::widget::Stack::with_capacity(2)
-                    .push(game.view().map(PlayerMessage::Game))
-                    .push(self.solver_overlay.view().map(PlayerMessage::Solver))
-            ]
-        } else {
-            iced::widget::row![
-                control_panel,
-                iced::widget::text("Failed to initialize the game, please check logs for details.")
-                    .color(iced::Color::from_rgb8(255, 0, 0))
-            ]
-        })
+        iced::widget::scrollable(iced::widget::row![
+            control_panel,
+            iced::widget::Stack::with_capacity(2)
+                .push(self.game.view().map(PlayerMessage::Game))
+                .push(self.solver_overlay.view().map(PlayerMessage::Solver))
+        ])
         .width(iced::Length::Fill)
         .height(iced::Length::Fill)
         .direction(iced::widget::scrollable::Direction::Both {
@@ -731,10 +656,6 @@ impl Player {
         })
         .on_scroll(PlayerMessage::Scrolled)
         .into()
-    }
-
-    pub fn theme(&self) -> Option<iced::Theme> {
-        Some(self.theme.clone())
     }
 
     pub fn subscriptions(&self) -> iced::Subscription<PlayerMessage> {

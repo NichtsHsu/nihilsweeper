@@ -1,5 +1,7 @@
+use std::sync::Arc;
+
 use iced::Task;
-use log::{debug, info, trace, warn};
+use log::{debug, error, info, trace, warn};
 
 use crate::{
     base::*,
@@ -22,7 +24,7 @@ pub enum BaseWindow {
 pub enum AppMessage {
     GetWindowId(Option<iced::window::Id>),
     Modal(modal::ModalMessage),
-    Player(player::PlayerMessage),
+    Player(PlayerMessage),
     CloseWindow(iced::window::Id),
     ActivateWindow,
 }
@@ -30,9 +32,12 @@ pub enum AppMessage {
 pub struct App {
     config: GlobalConfig,
     id: Option<iced::window::Id>,
+    skin_manager: Option<skin::SkinManager>,
+    skin: Option<Arc<skin::Skin>>,
+    theme: iced::Theme,
     base_window: BaseWindow,
     current_modal: modal::Modal,
-    player: player::Player,
+    player: Option<player::Player>,
     export: modal::export::ExportModal,
     import: modal::import::ImportModal,
     error: modal::error::ErrorModal,
@@ -49,17 +54,54 @@ impl App {
                 board: [30, 16, 99],
             }
         });
-        let player = Player::new(config.clone());
+        let skin_manager = crate::utils::resource_path("skin")
+            .inspect_err(|e| error!("Failed to get skin resource path: {}", e))
+            .and_then(|path| {
+                skin::SkinManager::new(path).inspect_err(|e| error!("Failed to initialize SkinManager: {}", e))
+            })
+            .ok();
+        let skin = skin_manager
+            .as_ref()
+            .and_then(|manager| {
+                manager.skins().get(&config.skin).or_else(|| {
+                    error!("Skin '{}' not found.", config.skin);
+                    None
+                })
+            })
+            .and_then(|builder| {
+                builder
+                    .build(config.cell_size)
+                    .inspect_err(|e| error!("Failed to build skin '{}': {}", config.skin, e))
+                    .ok()
+                    .map(Arc::new)
+            });
+        let theme = if skin.as_ref().map(|s| s.light).unwrap_or_default() {
+            iced::Theme::Light
+        } else {
+            iced::Theme::Dark
+        };
+        let player = skin.as_ref().map(|skin| Player::new(config.clone(), Arc::clone(skin)));
+
+        let mut error = modal::error::ErrorModal::new();
+        let mut current_modal = modal::Modal::default();
+        if player.is_none() {
+            trace!("Player failed to initialize, showing error modal.");
+            current_modal = modal::Modal::Error;
+            error.error_message = "Failed to initialize. Please check the logs for details.".to_string();
+        }
         (
             Self {
                 config,
                 id: None,
+                skin_manager,
+                skin,
+                theme,
                 base_window: BaseWindow::default(),
-                current_modal: modal::Modal::default(),
+                current_modal,
                 player,
                 export: modal::export::ExportModal::new(),
                 import: modal::import::ImportModal::new(),
-                error: modal::error::ErrorModal::new(),
+                error,
             },
             iced::window::latest().map(AppMessage::GetWindowId),
         )
@@ -109,24 +151,64 @@ impl App {
                     None => iced::window::oldest().and_then(iced::window::gain_focus),
                 };
             },
-            AppMessage::Player(PlayerMessage::SyncConfigToApp(config)) => {
-                debug!("Applying config update: {:?}", config);
-                config.apply_to(&mut self.config);
+            AppMessage::Player(PlayerMessage::Request(request)) => {
+                trace!("Handling player request: {:?}", request);
+                let Some(player) = &mut self.player else {
+                    error!("Player instance is not initialized.");
+                    return Task::none();
+                };
+                match request {
+                    player::RequestMessage::SyncConfigToApp(config) => {
+                        debug!("Applying config update: {:?}", config);
+                        config.apply_to(&mut self.config);
+                    },
+                    player::RequestMessage::RegenerateSkin { skin, cell_size } => {
+                        self.config.skin = skin;
+                        self.config.cell_size = cell_size;
+                        self.skin = self
+                            .skin_manager
+                            .as_ref()
+                            .and_then(|manager| {
+                                manager.skins().get(&self.config.skin).or_else(|| {
+                                    error!("Skin '{}' not found.", self.config.skin);
+                                    None
+                                })
+                            })
+                            .and_then(|builder| {
+                                builder
+                                    .build(self.config.cell_size)
+                                    .inspect_err(|e| error!("Failed to build skin '{}': {}", self.config.skin, e))
+                                    .ok()
+                                    .map(Arc::new)
+                            });
+                        if let Some(skin) = &self.skin {
+                            return player
+                                .update(player::PlayerMessage::UpdateSkin(Arc::clone(skin)))
+                                .map(AppMessage::Player);
+                        }
+                    },
+                    player::RequestMessage::ShowImportModal => {
+                        debug!("Showing import modal");
+                        self.current_modal = modal::Modal::ImportGame;
+                    },
+                    player::RequestMessage::ShowExportModal => {
+                        debug!("Showing export modal");
+                        self.current_modal = modal::Modal::ExportGame;
+                    },
+                    player::RequestMessage::ShowErrorModal(err) => {
+                        debug!("Showing error modal: {}", err);
+                        self.error.error_message = err;
+                        self.current_modal = modal::Modal::Error;
+                    },
+                }
             },
-            AppMessage::Player(PlayerMessage::ShowImportModal) => {
-                debug!("Showing import modal");
-                self.current_modal = modal::Modal::ImportGame;
+            AppMessage::Player(msg) => {
+                let Some(player) = &mut self.player else {
+                    error!("Player instance is not initialized.");
+                    return Task::none();
+                };
+                return player.update(msg).map(AppMessage::Player);
             },
-            AppMessage::Player(PlayerMessage::ShowExportModal) => {
-                debug!("Showing export modal");
-                self.current_modal = modal::Modal::ExportGame;
-            },
-            AppMessage::Player(PlayerMessage::ShowErrorModal(err)) => {
-                debug!("Showing error modal: {}", err);
-                self.error.error_message = err;
-                self.current_modal = modal::Modal::Error;
-            },
-            AppMessage::Player(msg) => return self.player.update(msg).map(AppMessage::Player),
             AppMessage::Modal(modal::ModalMessage::Import(modal::import::ImportMessage::Cancel))
             | AppMessage::Modal(modal::ModalMessage::Export(modal::export::ExportMessage::Cancel))
             | AppMessage::Modal(modal::ModalMessage::Error(modal::error::ErrorMessage::Acknowledge)) => {
@@ -141,15 +223,17 @@ impl App {
                     let import_type = self.import.config.import_type;
                     let text = std::mem::take(&mut self.import.config.text);
                     self.import.update(msg);
-                    return self
-                        .player
-                        .update(PlayerMessage::Import(player::ImportMessage::StartImport(
-                            import_type,
-                            text.text(),
-                        )))
-                        .map(AppMessage::Player);
+                    if let Some(player) = &mut self.player {
+                        return player
+                            .update(PlayerMessage::Import(player::ImportMessage::StartImport(
+                                import_type,
+                                text.text(),
+                            )))
+                            .map(AppMessage::Player);
+                    }
+                } else {
+                    self.import.update(msg);
                 }
-                self.import.update(msg);
             },
             AppMessage::Modal(modal::ModalMessage::Export(msg)) => {
                 trace!("Handling export modal message: {:?}", msg);
@@ -158,12 +242,14 @@ impl App {
                     self.current_modal = modal::Modal::None;
                     let export_type = self.export.config.export_type;
                     self.export.update(msg);
-                    return self
-                        .player
-                        .update(PlayerMessage::Export(player::ExportMessage::StartExport(export_type)))
-                        .map(AppMessage::Player);
+                    if let Some(player) = &mut self.player {
+                        return player
+                            .update(PlayerMessage::Export(player::ExportMessage::StartExport(export_type)))
+                            .map(AppMessage::Player);
+                    }
+                } else {
+                    self.export.update(msg);
                 }
-                self.export.update(msg);
             },
             AppMessage::CloseWindow(id) => match self.id {
                 Some(main_id) if main_id != id => {
@@ -181,8 +267,11 @@ impl App {
 
     pub fn view(&self) -> iced::Element<'_, AppMessage> {
         let base = match self.base_window {
-            BaseWindow::Player => self.player.view().map(AppMessage::Player),
-        };
+            BaseWindow::Player => self.player.as_ref().map(|player| player.view().map(AppMessage::Player)),
+        }
+        .unwrap_or(iced::widget::space().height(iced::Fill).width(iced::Fill).into());
+
+        trace!("Rendering view with current modal: {:?}", self.current_modal);
         match self.current_modal {
             modal::Modal::ImportGame => App::modal(
                 base,
@@ -210,13 +299,16 @@ impl App {
     }
 
     pub fn theme(&self) -> Option<iced::Theme> {
-        self.player.theme()
+        Some(self.theme.clone())
     }
 
     pub fn subscriptions(&self) -> iced::Subscription<AppMessage> {
-        let close = iced::window::close_requests().map(AppMessage::CloseWindow);
-        let player = self.player.subscriptions().map(AppMessage::Player);
-        let activation = crate::single_instance::activation_subscription();
-        iced::Subscription::batch([close, player, activation])
+        let mut subscriptions = Vec::with_capacity(3);
+        subscriptions.push(iced::window::close_requests().map(AppMessage::CloseWindow));
+        if let Some(player) = &self.player {
+            subscriptions.push(player.subscriptions().map(AppMessage::Player));
+        }
+        subscriptions.push(crate::single_instance::activation_subscription());
+        iced::Subscription::batch(subscriptions)
     }
 }

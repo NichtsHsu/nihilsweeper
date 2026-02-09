@@ -26,11 +26,11 @@ fn main() -> crate::error::Result<()> {
                 .theme(App::theme)
                 .subscription(App::subscriptions)
                 .run()?;
-        }
+        },
         Ok(false) => {
             info!("Another instance is already running, exiting");
             // Exit silently - the other instance has been notified
-        }
+        },
         Err(e) => {
             eprintln!("Error checking single instance: {}", e);
             // Continue anyway to not break the application
@@ -42,7 +42,7 @@ fn main() -> crate::error::Result<()> {
                 .theme(App::theme)
                 .subscription(App::subscriptions)
                 .run()?;
-        }
+        },
     }
 
     Ok(())

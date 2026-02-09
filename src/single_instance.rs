@@ -1,7 +1,9 @@
-use interprocess::local_socket::{prelude::*, GenericFilePath, GenericNamespaced, ListenerOptions, Name, Stream};
+use interprocess::local_socket::{GenericFilePath, GenericNamespaced, ListenerOptions, Name, Stream, prelude::*};
 use log::{debug, error, info, warn};
-use std::io::{Read, Write};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::{
+    io::{Read, Write},
+    sync::{Arc, Mutex, OnceLock},
+};
 
 const SOCKET_NAME: &str = "nihilsweeper-ipc";
 const ACTIVATION_MSG: &[u8] = b"ACTIVATE";
@@ -23,33 +25,31 @@ fn get_activation_notifier() -> Arc<tokio::sync::Notify> {
 pub fn activation_subscription() -> iced::Subscription<crate::ui::AppMessage> {
     struct ActivationSubscription;
 
-    iced::Subscription::run_with(
-        std::any::TypeId::of::<ActivationSubscription>(),
-        |_| {
-            let notifier = get_activation_notifier();
-            iced::futures::stream::unfold(notifier, |notifier| async move {
-                notifier.notified().await;
-                Some((crate::ui::AppMessage::ActivateWindow, notifier))
-            })
-        },
-    )
+    iced::Subscription::run_with(std::any::TypeId::of::<ActivationSubscription>(), |_| {
+        let notifier = get_activation_notifier();
+        iced::futures::stream::unfold(notifier, |notifier| async move {
+            notifier.notified().await;
+            Some((crate::ui::AppMessage::ActivateWindow, notifier))
+        })
+    })
 }
 
 /// Checks if this is the first instance of the application.
 /// If it is, returns Ok(true) and starts the IPC server.
-/// If it's not the first instance, sends an activation message to the first instance and returns Ok(false).
+/// If it's not the first instance, sends an activation message to the first instance and returns
+/// Ok(false).
 pub fn check_single_instance() -> Result<bool, Box<dyn std::error::Error>> {
     let instance = single_instance::SingleInstance::new("nihilsweeper-app")?;
 
     if instance.is_single() {
         info!("This is the first instance, setting up IPC server");
-        
+
         // Store the instance lock in a static to keep it alive for the application lifetime
         // This prevents other instances from acquiring the lock
-        SINGLE_INSTANCE_LOCK.set(instance).map_err(|_| {
-            "Failed to store single instance lock"
-        })?;
-        
+        SINGLE_INSTANCE_LOCK
+            .set(instance)
+            .map_err(|_| "Failed to store single instance lock")?;
+
         let notifier = get_activation_notifier();
 
         // Start IPC server in a background thread
@@ -97,11 +97,11 @@ fn run_ipc_server(notifier: Arc<tokio::sync::Notify>) -> Result<(), Box<dyn std:
                             info!("Received activation request");
                             notifier.notify_one();
                         }
-                    }
-                    Ok(_) => {}
+                    },
+                    Ok(_) => {},
                     Err(e) => warn!("Failed to read from IPC stream: {}", e),
                 }
-            }
+            },
             Err(e) => warn!("Failed to accept IPC connection: {}", e),
         }
     }
