@@ -1,3 +1,5 @@
+mod editor;
+
 pub enum AnalyzerMessage {}
 
 pub struct Analyzer {}

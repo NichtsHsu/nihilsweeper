@@ -2,7 +2,7 @@ use crate::{
     base::{board, encode_decode},
     config::*,
     engine::solver,
-    ui::*,
+    ui::{board_area::BoardArea, *},
 };
 use iced::{Function, Task};
 use log::{debug, error, info, trace};
@@ -43,6 +43,7 @@ pub enum RequestMessage {
     ShowImportModal,
     ShowExportModal,
     ShowErrorModal(String),
+    UpdateBoardArea(BoardArea),
 }
 
 #[derive(Debug, Clone)]
@@ -107,27 +108,21 @@ impl Player {
     const TEXT_INPUT_LOWER: [usize; 4] = [1, 1, 1, 8];
     const TEXT_INPUT_DEFAULTS: [usize; 4] = [30, 16, 99, 24];
 
-    pub fn new(config: GlobalConfig, skin: Arc<skin::Skin>) -> Self {
+    pub fn new(config: GlobalConfig, board_area: BoardArea, skin: Arc<skin::Skin>) -> Self {
         let board = Box::new(board::StandardBoard::new(
             config.board[0],
             config.board[1],
             config.board[2],
             config.chord_mode,
         ));
-        let game = game::Game::new(board, config.cell_size, Arc::clone(&skin));
+        let game = game::Game::new(board, board_area, config.cell_size, Arc::clone(&skin));
         let text_input_states = [
             config.board[0].to_string(),
             config.board[1].to_string(),
             config.board[2].to_string(),
             config.cell_size.to_string(),
         ];
-        let mut solver_overlay = overlay::SolverOverlay::new(
-            solver::default_engine(),
-            game.game_area(),
-            game.board_area(),
-            iced::Rectangle::default(),
-            config.cell_size,
-        );
+        let mut solver_overlay = overlay::SolverOverlay::new(solver::default_engine(), board_area, config.cell_size);
         solver_overlay.update(overlay::SolverOverlayMessage::SetLightSkin(skin.light));
         Self {
             config,
@@ -147,19 +142,25 @@ impl Player {
         }
     }
 
-    fn new_game(&mut self, board: Box<dyn board::Board>) -> Option<iced::Task<PlayerMessage>> {
+    fn new_game(&mut self, board: Box<dyn board::Board>, tasks: &mut Vec<Task<PlayerMessage>>) {
         info!(
             "Creating new game board: {}x{} with {} mines",
             board.width(),
             board.height(),
             board.mines()
         );
-        self.game = game::Game::new(board, self.config.cell_size, Arc::clone(&self.skin));
-        self.config.board = [
-            self.game.board().width(),
-            self.game.board().height(),
-            self.game.board().mines(),
-        ];
+        self.config.board = [board.width(), board.height(), board.mines()];
+        let board_area = BoardArea::calculate(
+            &self.skin,
+            self.config.cell_size,
+            self.config.board[0],
+            self.config.board[1],
+        );
+        tasks.push(Task::done(PlayerMessage::Request(RequestMessage::UpdateBoardArea(
+            board_area,
+        ))));
+        self.game = game::Game::new(board, board_area, self.config.cell_size, Arc::clone(&self.skin));
+        self.game.update(GameMessage::ViewportChanged(self.viewport));
         self.config_update.board(self.config.board);
         self.text_input_states = [
             self.config.board[0].to_string(),
@@ -170,11 +171,11 @@ impl Player {
         self.solver_overlay.clear_solver();
         self.solver_overlay.update(overlay::SolverOverlayMessage::Resize {
             cell_size: self.config.cell_size,
-            game_area: self.game.game_area(),
-            board_area: self.game.board_area(),
+            board_area,
         });
-        self.game.update(GameMessage::ViewportChanged(self.viewport));
-        self.update_solver()
+        if let Some(task) = self.update_solver() {
+            tasks.push(task);
+        }
     }
 
     fn update_solver(&mut self) -> Option<Task<PlayerMessage>> {
@@ -212,13 +213,24 @@ impl Player {
             match message {
                 PlayerMessage::UpdateSkin(skin) => {
                     trace!("Updating skin in Player");
+                    let board_area = BoardArea::calculate(
+                        &skin,
+                        self.config.cell_size,
+                        self.game.board().width(),
+                        self.game.board().height(),
+                    );
+                    tasks.push(Task::done(PlayerMessage::Request(RequestMessage::UpdateBoardArea(
+                        board_area,
+                    ))));
                     self.skin = skin;
-                    self.game
-                        .update(GameMessage::Resize(self.config.cell_size, Arc::clone(&self.skin)));
+                    self.game.update(GameMessage::Resize {
+                        cell_size: self.config.cell_size,
+                        board_area,
+                        skin: Arc::clone(&self.skin),
+                    });
                     self.solver_overlay.update(overlay::SolverOverlayMessage::Resize {
                         cell_size: self.config.cell_size,
-                        game_area: self.game.game_area(),
-                        board_area: self.game.board_area(),
+                        board_area,
                     });
                 },
                 PlayerMessage::Game(msg) => {
@@ -238,15 +250,15 @@ impl Player {
                         ];
                         if self.config.board != current_board {
                             info!("Board configuration changed, recreating the board");
-                            let task = self.new_game(Box::new(board::StandardBoard::new(
-                                self.config.board[0],
-                                self.config.board[1],
-                                self.config.board[2],
-                                self.config.chord_mode,
-                            )));
-                            if let Some(task) = task {
-                                tasks.push(task);
-                            }
+                            self.new_game(
+                                Box::new(board::StandardBoard::new(
+                                    self.config.board[0],
+                                    self.config.board[1],
+                                    self.config.board[2],
+                                    self.config.chord_mode,
+                                )),
+                                &mut tasks,
+                            );
                             break 'out;
                         }
                     }
@@ -419,9 +431,7 @@ impl Player {
                             debug!("Retrieved board from import: {}", board.is_some());
                             match board {
                                 Some(board) => {
-                                    if let Some(task) = self.new_game(board) {
-                                        tasks.push(task);
-                                    }
+                                    self.new_game(board, &mut tasks);
                                     info!("Board imported successfully");
                                     self.import_button_state = ImportButtonState::Completed { remaining_secs: 3 };
                                 },
@@ -525,7 +535,7 @@ impl Player {
         Task::batch(tasks)
     }
 
-    pub fn view(&self) -> iced::Element<'_, PlayerMessage> {
+    pub fn view_sidebar(&self, width: f32) -> iced::Element<'_, PlayerMessage> {
         let enable_button = !matches!(self.export_button_state, ExportButtonState::Exporting)
             && !matches!(self.import_button_state, ImportButtonState::Importing);
 
@@ -564,12 +574,12 @@ impl Player {
                 .align_y(iced::alignment::Vertical::Center),
                 iced::widget::center_x(
                     iced::widget::button(iced::widget::text("New Game").align_x(iced::alignment::Horizontal::Center))
-                        .width(120.0)
+                        .width(width * 0.6)
                         .on_press_maybe(enable_button.then_some(PlayerMessage::Game(GameMessage::FaceClicked)))
                 ),
                 iced::widget::center_x(
                     iced::widget::button(iced::widget::text("Continue").align_x(iced::alignment::Horizontal::Center))
-                        .width(120.0)
+                        .width(width * 0.6)
                         .on_press_maybe(
                             (enable_button && matches!(self.game.board().state(), board::BoardState::Lost { .. }))
                                 .then_some(PlayerMessage::Game(GameMessage::Continue))
@@ -577,7 +587,7 @@ impl Player {
                 ),
                 iced::widget::center_x(
                     iced::widget::button(iced::widget::text("Replay").align_x(iced::alignment::Horizontal::Center))
-                        .width(120.0)
+                        .width(width * 0.6)
                         .on_press_maybe(
                             (enable_button && !matches!(self.game.board().state(), board::BoardState::NotStarted))
                                 .then_some(PlayerMessage::Game(GameMessage::Replay))
@@ -587,7 +597,7 @@ impl Player {
                     iced::widget::button(
                         iced::widget::text(export_button_label).align_x(iced::alignment::Horizontal::Center)
                     )
-                    .width(120.0)
+                    .width(width * 0.6)
                     .on_press_maybe(
                         (enable_button && !matches!(self.game.board().state(), board::BoardState::NotStarted))
                             .then_some(PlayerMessage::Export(ExportMessage::ButtonClicked))
@@ -597,7 +607,7 @@ impl Player {
                     iced::widget::button(
                         iced::widget::text(import_button_label).align_x(iced::alignment::Horizontal::Center)
                     )
-                    .width(120.0)
+                    .width(width * 0.6)
                     .on_press_maybe(enable_button.then_some(PlayerMessage::Import(ImportMessage::ButtonClicked)))
                 ),
             ]
@@ -623,7 +633,7 @@ impl Player {
                 .width(iced::Length::Shrink)
         ]
         .align_y(iced::alignment::Vertical::Center);
-        let control_panel = iced::widget::container(
+        iced::widget::container(
             iced::widget::column![
                 iced::widget::center_x(iced::widget::text("Control Panel").size(20)),
                 iced::widget::center_x(board_control),
@@ -643,21 +653,15 @@ impl Player {
             .spacing(4)
             .padding(4),
         )
-        .width(iced::Length::Fixed(200.0));
-        iced::widget::scrollable(iced::widget::row![
-            control_panel,
-            iced::widget::Stack::with_capacity(2)
-                .push(self.game.view().map(PlayerMessage::Game))
-                .push(self.solver_overlay.view().map(PlayerMessage::Solver))
-        ])
-        .width(iced::Length::Fill)
-        .height(iced::Length::Fill)
-        .direction(iced::widget::scrollable::Direction::Both {
-            vertical: Default::default(),
-            horizontal: Default::default(),
-        })
-        .on_scroll(PlayerMessage::Scrolled)
+        .width(iced::Length::Fixed(width))
         .into()
+    }
+
+    pub fn view_game(&self) -> iced::Element<'_, PlayerMessage> {
+        iced::widget::Stack::with_capacity(2)
+            .push(self.game.view().map(PlayerMessage::Game))
+            .push(self.solver_overlay.view().map(PlayerMessage::Solver))
+            .into()
     }
 
     pub fn subscriptions(&self) -> iced::Subscription<PlayerMessage> {

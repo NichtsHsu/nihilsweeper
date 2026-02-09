@@ -1,6 +1,7 @@
 use crate::{
     base::board,
     engine::solver::{self, BoardSafety, Solver},
+    ui::board_area::BoardArea,
 };
 use iced::widget::canvas;
 use log::{debug, error, trace};
@@ -9,11 +10,7 @@ use std::sync::Arc;
 #[derive(Debug, Clone)]
 pub enum SolverOverlayMessage {
     SolverCompleted(solver::error::Result<BoardSafety>),
-    Resize {
-        cell_size: u32,
-        game_area: iced::Rectangle,
-        board_area: iced::Rectangle,
-    },
+    Resize { cell_size: u32, board_area: BoardArea },
     SetEnabled(bool),
     SetAdmitFlags(bool),
     SetLightSkin(bool),
@@ -24,8 +21,7 @@ pub struct SolverOverlay {
     solver: Arc<dyn Solver>,
     solver_result: Option<BoardSafety>,
     solver_admit_flags: bool,
-    game_area: iced::Rectangle,
-    board_area: iced::Rectangle,
+    board_area: BoardArea,
     viewport: iced::Rectangle,
     cell_size: u32,
     cache: canvas::Cache,
@@ -33,21 +29,14 @@ pub struct SolverOverlay {
 }
 
 impl SolverOverlay {
-    pub fn new<T: Solver + 'static>(
-        solver: T,
-        game_area: iced::Rectangle,
-        board_area: iced::Rectangle,
-        viewport: iced::Rectangle,
-        cell_size: u32,
-    ) -> Self {
+    pub fn new<T: Solver + 'static>(solver: T, board_area: BoardArea, cell_size: u32) -> Self {
         SolverOverlay {
             enabled: false,
             solver: Arc::new(solver),
             solver_result: None,
             solver_admit_flags: false,
-            game_area,
             board_area,
-            viewport,
+            viewport: iced::Rectangle::default(),
             cell_size,
             cache: canvas::Cache::new(),
             light_skin: true,
@@ -56,8 +45,8 @@ impl SolverOverlay {
 
     fn cell_position(&self, x: usize, y: usize) -> iced::Point {
         iced::Point::new(
-            x as f32 * self.cell_size as f32 + self.board_area.x,
-            y as f32 * self.cell_size as f32 + self.board_area.y,
+            x as f32 * self.cell_size as f32 + self.board_area.game_area.x,
+            y as f32 * self.cell_size as f32 + self.board_area.game_area.y,
         )
     }
 
@@ -97,14 +86,9 @@ impl SolverOverlay {
                 self.solver_result = result.inspect_err(|e| error!("Solver error: {:?}", e)).ok();
                 self.cache.clear();
             },
-            SolverOverlayMessage::Resize {
-                cell_size,
-                game_area,
-                board_area,
-            } => {
+            SolverOverlayMessage::Resize { cell_size, board_area } => {
                 trace!("Solver overlay resize: cell_size={}", cell_size);
                 self.cell_size = cell_size;
-                self.game_area = game_area;
                 self.board_area = board_area;
                 self.cache.clear();
             },
@@ -130,8 +114,8 @@ impl SolverOverlay {
 
     pub fn view(&self) -> iced::Element<'_, SolverOverlayMessage> {
         canvas::Canvas::new(self)
-            .width(self.game_area.width)
-            .height(self.game_area.height)
+            .width(self.board_area.canvas_area.width)
+            .height(self.board_area.canvas_area.height)
             .into()
     }
 }
@@ -167,10 +151,10 @@ impl canvas::Program<SolverOverlayMessage> for SolverOverlay {
 
             // Calculate the intersection of viewport and board area
             // Adjust board_area coordinates to scrollable content space
-            let board_x_in_content = canvas_x + self.board_area.x;
-            let board_y_in_content = canvas_y + self.board_area.y;
-            let board_x_end = board_x_in_content + self.board_area.width;
-            let board_y_end = board_y_in_content + self.board_area.height;
+            let board_x_in_content = canvas_x + self.board_area.game_area.x;
+            let board_y_in_content = canvas_y + self.board_area.game_area.y;
+            let board_x_end = board_x_in_content + self.board_area.game_area.width;
+            let board_y_end = board_y_in_content + self.board_area.game_area.height;
 
             let visible_x_start = self.viewport.x.max(board_x_in_content);
             let visible_y_start = self.viewport.y.max(board_y_in_content);
