@@ -17,7 +17,7 @@ resvg = "0.46"
 serde = { version = "1.0", features = ["derive"] }
 smallvec = { version = "1.15", features = ["union"] }
 tokio = { version = "1.49", features = ["sync"] }
-toml = "0.9"
+toml = "1.0"
 url = "2.5"
 usvg = "0.46"
 single-instance = "0.3"
